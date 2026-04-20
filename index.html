@@ -205,9 +205,12 @@
         <div class="cloud-title">☁️ تاريخ العمليات السحابية</div>
         <div class="cloud-status"><span class="cloud-dot" id="cloud-dot"></span><span id="cloud-status-text" style="color:#555">جاري الاتصال...</span></div>
       </div>
-      <button class="cloud-refresh" onclick="loadCloudHistory()">↻ تحديث</button>
+      <div style="display:flex;gap:8px">
+        <button class="cloud-refresh" onclick="loadCloudHistory()">↻ تحديث</button>
+        <button class="cloud-refresh" id="cloud-toggle-btn" onclick="toggleCloud()">🙈 إخفاء</button>
+      </div>
     </div>
-    <div class="cloud-table-wrap">
+    <div class="cloud-table-wrap" id="cloud-table-wrap">
       <div id="cloud-list"><div class="cloud-empty">جاري التحميل...</div></div>
     </div>
   </div>
@@ -741,6 +744,14 @@ async function clearLog(){
   const rwEl=document.getElementById('result-words');
   if(rwEl) rwEl.style.display='none';
   renderTxs();
+}
+
+function toggleCloud(){
+  const wrap=document.getElementById('cloud-table-wrap');
+  const btn=document.getElementById('cloud-toggle-btn');
+  const hidden=wrap.style.display==='none';
+  wrap.style.display=hidden?'':'none';
+  btn.textContent=hidden?'🙈 إخفاء':'👁 إظهار';
 }
 
 init();
