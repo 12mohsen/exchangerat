@@ -253,11 +253,14 @@ async function saveToSupabase(tx){
         converted_amount : parseFloat(tx.foreign),
         exchange_rate    : parseFloat(tx.rate),
         arabic_text      : tx.tafqeet || '',
-        tsrget_currency  : tx.currency
+        target_currency  : tx.currency
       })
     });
-    if(!res.ok){ const t=await res.text(); console.error('Supabase insert error:',t); }
-  }catch(e){ console.error('saveToSupabase:',e); }
+    const respText = await res.text();
+    console.log('Supabase insert status:', res.status, res.statusText, respText);
+    if(!res.ok){ console.error('Supabase insert error:',respText); }
+    else{ console.log('✅ Saved to Supabase'); }
+  }catch(e){ console.error('saveToSupabase exception:',e); }
 }
 
 async function loadCloudHistory(){
@@ -288,7 +291,7 @@ async function loadCloudHistory(){
         <th>التاريخ</th>
       </tr></thead>
       <tbody>${data.map(r=>{
-        const cur=r.tsrget_currency||'';
+        const cur=r.target_currency||'';
         const info=CURRENCIES[cur]||{};
         const dateStr=r.created_at?new Date(r.created_at).toLocaleString('ar-SA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
         return `<tr>
