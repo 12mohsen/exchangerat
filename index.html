@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>input,textarea{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif!important}</style>
+<title>سعر الصرف</title>
+<script src="https://unpkg.com/dexie@3.2.4/dist/dexie.min.js"></script>
+<script src="https://unpkg.com/n2words@1.18.0/dist/n2words.js" onerror="window._n2wordsFaild=true"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif}
+  body{background:#050a18;min-height:100vh;padding:20px;direction:rtl;color:#fff;position:relative;overflow-x:hidden}
+  input,span,strong,.val,.tx-info{font-variant-numeric:lining-nums;unicode-bidi:plaintext}
+  #bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .container{max-width:660px;margin:0 auto;position:relative;z-index:1}
+  h1{text-align:center;font-size:1.6rem;margin-bottom:24px;background:linear-gradient(135deg,#4a9eff,#a78bfa);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .card{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;padding:20px;margin-bottom:16px}
+  .card-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:14px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .input-group{display:flex;flex-direction:column;gap:6px}
+  label{font-size:.82rem;color:#aaa;font-weight:600}
+  input,select{background:#13131f;border:1px solid #2a2a3e;border-radius:8px;padding:10px 12px;color:#fff;font-size:1rem;width:100%;transition:.2s}
+  input:focus,select:focus{outline:none;border-color:#4a9eff;box-shadow:0 0 0 3px rgba(74,158,255,.15)}
+  select option{background:#1e1e2e}
+
+  .amounts-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .amt-box{background:#13131f;border:1px solid #2a2a3e;border-radius:10px;padding:12px}
+  .amt-box label{font-size:.78rem;color:#888;margin-bottom:6px;display:block}
+  .amt-box input{border:none;background:transparent;padding:0;font-size:1.1rem;font-weight:700;color:#4a9eff}
+  .amt-box input:focus{box-shadow:none}
+  .amt-box .flag{font-size:1.2rem;margin-left:4px}
+
+  .prices-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .price-card{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:10px;padding:14px;text-align:center}
+  .price-card .lbl{font-size:.78rem;color:#888;margin-bottom:6px}
+  .price-card .val{font-size:1.35rem;font-weight:700;color:#4a9eff}
+  .arrow{margin-left:4px;font-size:.95rem}
+  .arrow-up{color:#4caf50}.arrow-down{color:#f44336}
+
+  .trade-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .btn{border:none;border-radius:10px;padding:13px;font-size:1rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:.2s;width:100%}
+  .btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .buy-btn{background:linear-gradient(135deg,#2e7d32,#4caf50);color:#fff}
+  .sell-btn{background:linear-gradient(135deg,#c62828,#f44336);color:#fff}
+  .log-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .save-btn{background:#1e3a5f;color:#4a9eff;border:1px solid #4a9eff}
+  .clear-btn{background:#3a1a1a;color:#f44336;border:1px solid #f44336}
+
+  .result-words{background:#1a2a1a;border:1px solid #2a4a2a;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:.95rem;color:#a0e0a0;line-height:1.7;display:none}
+  .result-words .rw-label{font-size:.75rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+  .result-words .rw-text{color:#4caf50;font-weight:700;font-size:1rem;direction:rtl}
+  .history{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;padding:16px;max-height:380px;overflow-y:auto}
+  .history::-webkit-scrollbar{width:4px}
+  .history::-webkit-scrollbar-thumb{background:#333;border-radius:4px}
+  .history-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:12px}
+  .tx{background:#13131f;border-radius:8px;padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .tx.buy{border-right:3px solid #4caf50}.tx.sell{border-right:3px solid #f44336}
+  .tx-info{flex:1;font-size:.82rem;color:#ccc;line-height:1.9}
+  .tx-info strong{color:#fff}
+  .type-buy{color:#4caf50;font-weight:700}.type-sell{color:#f44336;font-weight:700}
+  .del-btn{background:#3a1a1a;border:1px solid #f44336;color:#f44336;border-radius:6px;padding:4px 10px;font-size:.75rem;cursor:pointer;white-space:nowrap;transition:.2s}
+  .del-btn:hover{background:#f44336;color:#fff}
+  .empty{text-align:center;color:#555;font-size:.9rem;padding:20px}
+  .rate-hint{font-size:.75rem;color:#666;margin-top:4px}
+  .tx-tafqeet{color:#a78bfa;font-size:.8rem;font-style:italic;direction:rtl;margin-top:2px}
+  .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);background:#1e1e2e;border:1px solid #2a2a3e;border-radius:12px;padding:12px 24px;font-size:.92rem;color:#fff;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,.5)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.success{border-color:#4caf50;color:#4caf50}
+  .toast.warn{border-color:#f9a825;color:#f9a825}
+
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:10000;opacity:0;pointer-events:none;transition:opacity .25s}
+  .modal-overlay.show{opacity:1;pointer-events:all}
+  .modal-box{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:18px;padding:28px 24px;max-width:340px;width:90%;text-align:center;transform:scale(.92) translateY(16px);transition:transform .25s;box-shadow:0 8px 48px rgba(0,0,0,.6)}
+  .modal-overlay.show .modal-box{transform:scale(1) translateY(0)}
+  .modal-icon{font-size:2.4rem;margin-bottom:10px}
+  .modal-title{font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:8px}
+  .modal-body{font-size:.82rem;color:#aaa;line-height:1.7;margin-bottom:20px;direction:rtl}
+  .modal-body strong{color:#f9a825}
+  .modal-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .modal-btn{border:none;border-radius:10px;padding:11px;font-size:.95rem;font-weight:700;cursor:pointer;transition:.2s}
+  .modal-btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+  .modal-btn.yes{background:linear-gradient(135deg,#2e7d32,#4caf50);color:#fff}
+  .modal-btn.no{background:#2a2a3e;color:#aaa;border:1px solid #3a3a5e}
+
+  .cloud-section{margin-top:20px}
+  .cloud-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .cloud-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888}
+  .cloud-refresh{background:none;border:1px solid #2a2a3e;color:#4a9eff;border-radius:8px;padding:5px 12px;font-size:.75rem;cursor:pointer;transition:.2s}
+  .cloud-refresh:hover{background:#1e1e2e;border-color:#4a9eff}
+  .cloud-table-wrap{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;overflow:hidden}
+  .cloud-table{width:100%;border-collapse:collapse;font-size:.78rem}
+  .cloud-table th{background:#13131f;color:#888;font-weight:600;padding:10px 12px;text-align:right;border-bottom:1px solid #2a2a3e;letter-spacing:.5px}
+  .cloud-table td{padding:10px 12px;border-bottom:1px solid #1a1a2e;color:#ccc;vertical-align:middle}
+  .cloud-table tr:last-child td{border-bottom:none}
+  .cloud-table tr:hover td{background:#13131f}
+  .cloud-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:700}
+  .cloud-badge.buy{background:rgba(76,175,80,.15);color:#4caf50;border:1px solid rgba(76,175,80,.3)}
+  .cloud-badge.sell{background:rgba(244,67,54,.15);color:#f44336;border:1px solid rgba(244,67,54,.3)}
+  .cloud-empty{text-align:center;color:#555;font-size:.85rem;padding:24px}
+  .cloud-tafqeet{color:#a78bfa;font-size:.72rem;display:block;margin-top:2px;font-style:italic}
+  .cloud-status{display:flex;align-items:center;gap:6px;font-size:.72rem;margin-bottom:8px}
+  .cloud-dot{width:7px;height:7px;border-radius:50%;background:#555}
+  .cloud-dot.ok{background:#4caf50;box-shadow:0 0 6px #4caf50}
+  .cloud-dot.err{background:#f44336}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>💱 سعر الصرف</h1>
+
+  <div class="card">
+    <div class="card-title">إعدادات العملة</div>
+    <div class="grid-2">
+      <div class="input-group">
+        <label>العملة الأجنبية</label>
+        <select id="currency" onchange="onCurrencyChange()">
+          <option value="USD">🇺🇸 دولار أمريكي (USD)</option>
+          <option value="IDR">🇮🇩 روبية إندونيسية (IDR)</option>
+          <option value="EUR">🇪🇺 يورو (EUR)</option>
+          <option value="GBP">🇬🇧 جنيه إسترليني (GBP)</option>
+          <option value="AED">🇦🇪 درهم إماراتي (AED)</option>
+          <option value="KWD">🇰🇼 دينار كويتي (KWD)</option>
+          <option value="BHD">🇧🇭 دينار بحريني (BHD)</option>
+          <option value="QAR">🇶🇦 ريال قطري (QAR)</option>
+          <option value="OMR">🇴🇲 ريال عماني (OMR)</option>
+          <option value="JOD">🇯🇴 دينار أردني (JOD)</option>
+          <option value="EGP">🇪🇬 جنيه مصري (EGP)</option>
+          <option value="TRY">🇹🇷 ليرة تركية (TRY)</option>
+          <option value="INR">🇮🇳 روبية هندية (INR)</option>
+          <option value="PKR">🇵🇰 روبية باكستانية (PKR)</option>
+          <option value="MYR">🇲🇾 رينغيت ماليزي (MYR)</option>
+          <option value="PHP">🇵🇭 بيزو فلبيني (PHP)</option>
+          <option value="BDT">🇧🇩 تاكا بنغلاديشية (BDT)</option>
+          <option value="ETH">🇪🇹 بر إثيوبي (ETB)</option>
+          <option value="NGN">🇳🇬 نيرة نيجيرية (NGN)</option>
+          <option value="CNY">🇨🇳 يوان صيني (CNY)</option>
+          <option value="JPY">🇯🇵 ين ياباني (JPY)</option>
+          <option value="KRW">🇰🇷 وون كوري (KRW)</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label for="rate">سعر الصرف (ريال لكل وحدة)</label>
+        <input type="number" id="rate" step="0.0001" min="0" oninput="calc('rate')">
+        <div class="rate-hint" id="rate-hint"></div>
+      </div>
+    </div>
+
+    <div class="amounts-grid">
+      <div class="amt-box">
+        <label><span class="flag">🇸🇦</span> المبلغ بالريال السعودي</label>
+        <input type="number" id="sar" min="0" oninput="calc('sar')" placeholder="0.00">
+      </div>
+      <div class="amt-box">
+        <label><span class="flag" id="foreign-flag">🇺🇸</span> المبلغ بـ <span id="foreign-name">USD</span></label>
+        <input type="number" id="foreign" min="0" oninput="calc('foreign')" placeholder="0.00">
+        <div id="foreign-words" style="font-size:.85rem;color:#fff;margin-top:6px;min-height:16px;direction:rtl"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="input-group">
+        <label for="comm">العمولة (%)</label>
+        <input type="number" id="comm" value="0" step="0.1" min="0" oninput="calc('sar')" style="max-width:200px">
+      </div>
+    </div>
+  </div>
+
+  <div class="prices-grid">
+    <div class="price-card">
+      <div class="lbl">سعر الشراء</div>
+      <div class="val"><span id="buy-arrow" class="arrow">⟷</span><span id="buy-price">0.00</span></div>
+    </div>
+    <div class="price-card">
+      <div class="lbl">سعر البيع</div>
+      <div class="val"><span id="sell-arrow" class="arrow">⟷</span><span id="sell-price">0.00</span></div>
+    </div>
+  </div>
+
+  <div class="trade-btns">
+    <button class="btn buy-btn" onclick="trade('buy')">← شراء</button>
+    <button class="btn sell-btn" onclick="trade('sell')">بيع →</button>
+  </div>
+
+  <div class="result-words" id="result-words">
+    <div class="rw-label">التفقيط</div>
+    <div class="rw-text" id="result-words-text"></div>
+  </div>
+
+  <div class="log-btns">
+    <button class="btn save-btn" onclick="saveLog()">💾 حفظ السجل</button>
+    <button class="btn clear-btn" onclick="clearLog()">🗑️ حذف السجل</button>
+  </div>
+
+  <div class="history">
+    <div class="history-title">سجل العمليات</div>
+    <div id="tx-list"><div class="empty">لا توجد عمليات بعد</div></div>
+  </div>
+
+  <div class="cloud-section">
+    <div class="cloud-header">
+      <div>
+        <div class="cloud-title">☁️ تاريخ العمليات السحابية</div>
+        <div class="cloud-status"><span class="cloud-dot" id="cloud-dot"></span><span id="cloud-status-text" style="color:#555">جاري الاتصال...</span></div>
+      </div>
+      <button class="cloud-refresh" onclick="loadCloudHistory()">↻ تحديث</button>
+    </div>
+    <div class="cloud-table-wrap">
+      <div id="cloud-list"><div class="cloud-empty">جاري التحميل...</div></div>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:20px;padding:10px;color:#444;font-size:.8rem;letter-spacing:1px">
+    ملكية&nbsp; <span style="color:#a78bfa;font-weight:700">mohsen</span>
+  </div>
+</div>
+
+<canvas id="bg-canvas"></canvas>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-icon">⚠️</div>
+    <div class="modal-title">عملية مسجّلة مسبقاً</div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-btns">
+      <button class="modal-btn yes" id="modal-yes">نعم، احفظها</button>
+      <button class="modal-btn no" id="modal-no">لا، إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://tvbuvwjkojhqcxhyehfs.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_rySOIJ2uxPvZ8eUKFDzOhw_Ohrm0UcL';
+let sbClient = null;
+try{ sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY); }catch(e){}
+
+async function saveToSupabase(tx){
+  if(!sbClient) return;
+  try{
+    await sbClient.from('exchange_history').insert({
+      base_amount   : parseFloat(tx.sar),
+      converted_amount: parseFloat(tx.foreign),
+      exchange_rate : parseFloat(tx.rate),
+      arabic_text   : tx.tafqeet || '',
+      target_currency: tx.currency,
+      operation_type: tx.type
+    });
+  }catch(e){}
+}
+
+async function loadCloudHistory(){
+  const el=document.getElementById('cloud-list');
+  const dot=document.getElementById('cloud-dot');
+  const statusTxt=document.getElementById('cloud-status-text');
+  if(!sbClient){
+    dot.className='cloud-dot err';
+    statusTxt.textContent='غير متصل بـ Supabase';
+    statusTxt.style.color='#f44336';
+    el.innerHTML='<div class="cloud-empty">⚠️ لا يوجد اتصال بالسحابة</div>';
+    return;
+  }
+  el.innerHTML='<div class="cloud-empty">جاري التحميل...</div>';
+  try{
+    const {data,error}=await sbClient
+      .from('exchange_history')
+      .select('*')
+      .order('created_at',{ascending:false})
+      .limit(10);
+    if(error) throw error;
+    dot.className='cloud-dot ok';
+    statusTxt.textContent='متصل • آخر تحديث: '+new Date().toLocaleTimeString('ar-SA');
+    statusTxt.style.color='#4caf50';
+    if(!data||!data.length){el.innerHTML='<div class="cloud-empty">لا توجد عمليات سحابية بعد</div>';return;}
+    el.innerHTML=`<table class="cloud-table">
+      <thead><tr>
+        <th>النوع</th><th>العملة</th>
+        <th>المبلغ (ر.س)</th><th>المُحوَّل</th>
+        <th>سعر الصرف</th><th>التفقيط</th>
+        <th>التاريخ</th>
+      </tr></thead>
+      <tbody>${data.map(r=>{
+        const isBuy=r.operation_type==='شراء';
+        const cur=r.target_currency||'';
+        const info=CURRENCIES[cur]||{};
+        const dateStr=r.created_at?new Date(r.created_at).toLocaleString('ar-SA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+        return `<tr>
+          <td><span class="cloud-badge ${isBuy?'buy':'sell'}">${r.operation_type||'—'}</span></td>
+          <td>${info.flag||''} ${cur}</td>
+          <td>${parseFloat(r.base_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+          <td style="color:#4a9eff;font-weight:700">${parseFloat(r.converted_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+          <td style="color:#a78bfa">${parseFloat(r.exchange_rate||0)}</td>
+          <td><span class="cloud-tafqeet">${r.arabic_text||'—'}</span></td>
+          <td style="color:#666;font-size:.7rem">${dateStr}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  }catch(e){
+    dot.className='cloud-dot err';
+    statusTxt.textContent='خطأ في الاتصال';
+    statusTxt.style.color='#f44336';
+    el.innerHTML='<div class="cloud-empty">⚠️ تعذّر تحميل البيانات من السحابة</div>';
+  }
+}
+
+(function(){
+  const canvas=document.getElementById('bg-canvas');
+  const ctx=canvas.getContext('2d');
+  const SYMBOLS=['$','€','¥','£','₺','﷼','₹','₩','Fr'];
+  let W,H,particles,orbs,waves;
+
+  function resize(){
+    W=canvas.width=window.innerWidth;
+    H=canvas.height=window.innerHeight;
+  }
+
+  function rand(a,b){return Math.random()*(b-a)+a;}
+
+  function initParticles(){
+    particles=Array.from({length:28},()=>({
+      x:rand(0,W),y:rand(0,H),
+      vy:rand(-0.4,-0.15),vx:rand(-0.15,0.15),
+      sym:SYMBOLS[Math.floor(rand(0,SYMBOLS.length))],
+      size:rand(12,26),opacity:rand(0.04,0.13),
+      rot:rand(0,Math.PI*2),rotV:rand(-0.003,0.003)
+    }));
+  }
+
+  function initOrbs(){
+    orbs=[
+      {x:W*0.15,y:H*0.25,r:180,c:'rgba(30,80,180,0.18)'},
+      {x:W*0.85,y:H*0.6 ,r:220,c:'rgba(80,20,160,0.15)'},
+      {x:W*0.5 ,y:H*0.8 ,r:150,c:'rgba(0,120,200,0.12)'},
+      {x:W*0.7 ,y:H*0.15,r:130,c:'rgba(20,160,120,0.10)'},
+    ];
+  }
+
+  function initWaves(){
+    waves=[
+      {amp:38,freq:0.007,phase:0,   speed:0.006,y:H*0.35,color:'rgba(74,158,255,0.07)'},
+      {amp:28,freq:0.009,phase:1.5, speed:0.009,y:H*0.55,color:'rgba(167,139,250,0.06)'},
+      {amp:22,freq:0.011,phase:3.0, speed:0.007,y:H*0.72,color:'rgba(76,175,80,0.05)'},
+    ];
+  }
+
+  function drawOrbs(){
+    orbs.forEach(o=>{
+      const g=ctx.createRadialGradient(o.x,o.y,0,o.x,o.y,o.r);
+      g.addColorStop(0,o.c);
+      g.addColorStop(1,'transparent');
+      ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,Math.PI*2);
+      ctx.fillStyle=g;ctx.fill();
+    });
+  }
+
+  function drawWaves(){
+    waves.forEach(w=>{
+      w.phase+=w.speed;
+      ctx.beginPath();
+      ctx.moveTo(0,w.y);
+      for(let x=0;x<=W;x+=4){
+        ctx.lineTo(x, w.y+Math.sin(x*w.freq+w.phase)*w.amp);
+      }
+      ctx.strokeStyle=w.color;
+      ctx.lineWidth=1.5;
+      ctx.stroke();
+    });
+  }
+
+  function drawParticles(){
+    particles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.rot+=p.rotV;
+      if(p.y<-40) p.y=H+20;
+      if(p.x<-40) p.x=W+20;
+      if(p.x>W+40) p.x=-20;
+      ctx.save();
+      ctx.translate(p.x,p.y);
+      ctx.rotate(p.rot);
+      ctx.globalAlpha=p.opacity;
+      ctx.font=`bold ${p.size}px serif`;
+      ctx.fillStyle='#a0c8ff';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.fillText(p.sym,0,0);
+      ctx.restore();
+    });
+    ctx.globalAlpha=1;
+  }
+
+  function drawGrid(){
+    ctx.strokeStyle='rgba(74,158,255,0.03)';
+    ctx.lineWidth=1;
+    for(let x=0;x<W;x+=60){
+      ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+    }
+    for(let y=0;y<H;y+=60){
+      ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+    }
+  }
+
+  function loop(){
+    ctx.clearRect(0,0,W,H);
+    const bg=ctx.createLinearGradient(0,0,W,H);
+    bg.addColorStop(0,'#050a18');
+    bg.addColorStop(0.5,'#080d20');
+    bg.addColorStop(1,'#06091a');
+    ctx.fillStyle=bg;
+    ctx.fillRect(0,0,W,H);
+    drawGrid();
+    drawOrbs();
+    drawWaves();
+    drawParticles();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('resize',()=>{resize();initOrbs();initWaves();});
+  resize();initParticles();initOrbs();initWaves();
+  loop();
+})();
+
+function showConfirm(msg){
+  return new Promise(resolve=>{
+    document.getElementById('modal-body').innerHTML=msg;
+    const overlay=document.getElementById('modal-overlay');
+    overlay.classList.add('show');
+    const yes=document.getElementById('modal-yes');
+    const no=document.getElementById('modal-no');
+    function close(val){overlay.classList.remove('show');yes.onclick=null;no.onclick=null;resolve(val);}
+    yes.onclick=()=>close(true);
+    no.onclick=()=>close(false);
+  });
+}
+
+function showToast(msg, type='success', duration=2500){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='toast '+type;
+  void t.offsetWidth;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer=setTimeout(()=>t.classList.remove('show'),duration);
+}
+
+const CURRENCIES = {
+  USD:{name:'دولار أمريكي',flag:'🇺🇸',rate:3.75,decimals:2},
+  IDR:{name:'روبية إندونيسية',flag:'🇮🇩',rate:0.00023,decimals:0},
+  EUR:{name:'يورو',flag:'🇪🇺',rate:4.10,decimals:2},
+  GBP:{name:'جنيه إسترليني',flag:'🇬🇧',rate:4.80,decimals:2},
+  AED:{name:'درهم إماراتي',flag:'🇦🇪',rate:1.02,decimals:2},
+  KWD:{name:'دينار كويتي',flag:'🇰🇼',rate:12.20,decimals:3},
+  BHD:{name:'دينار بحريني',flag:'🇧🇭',rate:9.95,decimals:3},
+  QAR:{name:'ريال قطري',flag:'🇶🇦',rate:1.03,decimals:2},
+  OMR:{name:'ريال عماني',flag:'🇴🇲',rate:9.74,decimals:3},
+  JOD:{name:'دينار أردني',flag:'🇯🇴',rate:5.29,decimals:3},
+  EGP:{name:'جنيه مصري',flag:'🇪🇬',rate:0.076,decimals:2},
+  TRY:{name:'ليرة تركية',flag:'🇹🇷',rate:0.11,decimals:2},
+  INR:{name:'روبية هندية',flag:'🇮🇳',rate:0.045,decimals:2},
+  PKR:{name:'روبية باكستانية',flag:'🇵🇰',rate:0.013,decimals:2},
+  MYR:{name:'رينغيت ماليزي',flag:'🇲🇾',rate:0.85,decimals:2},
+  PHP:{name:'بيزو فلبيني',flag:'🇵🇭',rate:0.066,decimals:2},
+  BDT:{name:'تاكا بنغلاديشية',flag:'🇧🇩',rate:0.034,decimals:2},
+  ETH:{name:'بر إثيوبي',flag:'🇪🇹',rate:0.029,decimals:2},
+  NGN:{name:'نيرة نيجيرية',flag:'🇳🇬',rate:0.0023,decimals:2},
+  CNY:{name:'يوان صيني',flag:'🇨🇳',rate:0.516,decimals:2},
+  JPY:{name:'ين ياباني',flag:'🇯🇵',rate:0.025,decimals:0},
+  KRW:{name:'وون كوري',flag:'🇰🇷',rate:0.0027,decimals:0},
+};
+
+let prevBuy=0,prevSell=0,txs=[];
+
+const db = new Dexie('SarfDB');
+db.version(1).stores({ txs: '++id,date,type,currency' });
+db.version(2).stores({ settings: 'key,value', txs: '++id,date,type,currency' });
+
+async function init(){
+  try{
+    const rows = await db.txs.orderBy('id').reverse().toArray();
+    txs = rows;
+  }catch(e){txs=[];}
+  try{
+    const s = await db.settings.get('main');
+    if(s && s.value){
+      const d = JSON.parse(s.value);
+      document.getElementById('currency').value=d.currency||'USD';
+      document.getElementById('rate').value=d.rate||3.75;
+      document.getElementById('comm').value=d.comm||0;
+      document.getElementById('sar').value=d.sar||'';
+      document.getElementById('foreign').value=d.foreign||'';
+    }
+  }catch(e){}
+  onCurrencyChange(false);
+  renderTxs();
+}
+
+function onCurrencyChange(resetRate=true){
+  const code=document.getElementById('currency').value;
+  const c=CURRENCIES[code];
+  if(resetRate) document.getElementById('rate').value=c.rate;
+  document.getElementById('foreign-flag').textContent=c.flag;
+  document.getElementById('foreign-name').textContent=code;
+  document.getElementById('rate-hint').textContent=`1 ${code} = ${parseFloat(document.getElementById('rate').value).toLocaleString('en-US')} ر.س`;
+  calc('sar');
+}
+
+async function saveSettings(){
+  try{
+    await db.settings.put({key:'main',value:JSON.stringify({
+      currency:document.getElementById('currency').value,
+      rate:document.getElementById('rate').value,
+      comm:document.getElementById('comm').value,
+      sar:document.getElementById('sar').value,
+      foreign:document.getElementById('foreign').value,
+    })});
+  }catch(e){}
+}
+
+function toArabicWords(num){
+  try{
+    const whole = Math.floor(Math.abs(num));
+    const dec = Math.round((Math.abs(num) - whole) * 100);
+    const fn = (typeof n2words === 'function') ? n2words
+              : (typeof window.n2words === 'function') ? window.n2words
+              : null;
+    if(fn){
+      let text = fn(whole, {lang:'ar'});
+      if(dec > 0) text += ' وَ' + fn(dec, {lang:'ar'}) + ' هللة';
+      return text;
+    }
+  }catch(e){}
+  return numToAr(num);
+}
+
+const ONES=['','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
+const TENS=['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
+function numToAr(n){
+  n=Math.floor(n);
+  if(n===0)return'صفر';
+  if(n<0)return'سالب '+numToAr(-n);
+  let parts=[];
+  if(n>=1000000000){parts.push(numToAr(Math.floor(n/1000000000))+' مليار');n%=1000000000;}
+  if(n>=1000000){parts.push(numToAr(Math.floor(n/1000000))+' مليون');n%=1000000;}
+  if(n>=1000){parts.push(numToAr(Math.floor(n/1000))+' ألف');n%=1000;}
+  if(n>=100){
+    parts.push(ONES[Math.floor(n/100)]+' مئة');
+    n%=100;
+  }
+  if(n>=20){
+    let t=TENS[Math.floor(n/10)];
+    if(n%10) t=ONES[n%10]+' و'+TENS[Math.floor(n/10)];
+    parts.push(t);
+  } else if(n>0){
+    parts.push(ONES[n]);
+  }
+  return parts.join(' و');
+}
+function updateWords(inputId, wordsId){
+  const inp=document.getElementById(inputId);
+  const el=document.getElementById(wordsId);
+  if(!inp||!el)return;
+  const val=parseFloat(inp.value);
+  el.textContent=(!val||isNaN(val))?'':numToAr(val);
+}
+function toWestern(str){
+  return String(str).replace(/[٠١٢٣٤٥٦٧٨٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+                    .replace(/[۰۱۲۳۴۵۶۷۸۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+}
+function fixInput(el){
+  const val=toWestern(el.value);
+  if(el.value!==val){const p=el.selectionStart;el.value=val;try{el.setSelectionRange(p,p);}catch(e){}}
+}
+document.querySelectorAll('input[type=number]').forEach(el=>{
+  el.addEventListener('input',()=>fixInput(el));
+});
+function calc(source){
+  const code=document.getElementById('currency').value;
+  const c=CURRENCIES[code];
+  const rate=parseFloat(document.getElementById('rate').value)||c.rate;
+  const comm=parseFloat(document.getElementById('comm').value)||0;
+
+  document.getElementById('rate-hint').textContent=`1 ${code} = ${rate} ر.س`;
+
+  let sar=parseFloat(document.getElementById('sar').value)||0;
+  let foreign=parseFloat(document.getElementById('foreign').value)||0;
+
+  if(source==='sar'){
+    const net=sar*(1-comm/100);
+    foreign=net/rate;
+    document.getElementById('foreign').value=foreign>0?foreign.toFixed(c.decimals):'';
+  } else if(source==='foreign'){
+    sar=foreign*rate*(1/(1-comm/100));
+    document.getElementById('sar').value=sar>0?sar.toFixed(2):'';
+  } else if(source==='rate'){
+    if(sar>0){
+      const net=sar*(1-comm/100);
+      foreign=net/rate;
+      document.getElementById('foreign').value=foreign>0?foreign.toFixed(c.decimals):'';
+    }
+  }
+
+  const net=sar*(1-comm/100);
+  const buyR=rate*1.002,sellR=rate*0.998;
+  const buyP=net/sellR;   // ريال تدفع ← تحصل على عملة بسعر بيع الصراف
+  const sellP=net/buyR;   // ريال تحصل ← تبيع عملة بسعر شراء الصراف
+  const dec=CURRENCIES[code].decimals;
+  document.getElementById('buy-price').textContent=buyP.toFixed(dec);
+  document.getElementById('sell-price').textContent=sellP.toFixed(dec);
+  setArrow('buy-arrow',buyP,prevBuy);
+  setArrow('sell-arrow',sellP,prevSell);
+  prevBuy=buyP;prevSell=sellP;
+  updateWords('sar','sar-words');
+  updateWords('foreign','foreign-words');
+  saveSettings();
+}
+
+function setArrow(id,cur,prev){
+  const el=document.getElementById(id);
+  if(cur>prev){el.textContent='↑';el.className='arrow arrow-up';}
+  else if(cur<prev){el.textContent='↓';el.className='arrow arrow-down';}
+  else{el.textContent='⟷';el.className='arrow';}
+}
+
+async function trade(type){
+  const code=document.getElementById('currency').value;
+  const c=CURRENCIES[code];
+  const rate=parseFloat(document.getElementById('rate').value)||c.rate;
+  const comm=parseFloat(document.getElementById('comm').value)||0;
+  const sar=parseFloat(document.getElementById('sar').value)||0;
+  if(!sar){showToast('⚠️ الرجاء إدخال المبلغ أولاً','warn');return;}
+  const commAmt=sar*(comm/100);
+  const net=sar-commAmt;
+  const foreign=net/rate;
+  const price=(type==='buy'?rate*1.002:rate*0.998).toFixed(4);
+  const tafqeet=toArabicWords(parseFloat(foreign.toFixed(c.decimals)));
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric'});
+  const timeStr=now.toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'});
+  const tx={
+    type:type==='buy'?'شراء':'بيع',
+    currency:code,flag:c.flag,currencyName:c.name,
+    sar:sar.toFixed(2),
+    net:net.toFixed(2),
+    foreign:foreign.toFixed(c.decimals),
+    price,rate,comm,
+    commAmt:commAmt.toFixed(2),
+    tafqeet,
+    date:dateStr+' — '+timeStr,
+    ts:now.getTime()
+  };
+  const duplicate = txs.find(t=>
+    t.type===tx.type &&
+    t.currency===tx.currency &&
+    t.sar===tx.sar &&
+    t.price===tx.price &&
+    (now.getTime()-(t.ts||0)) < 60000
+  );
+  if(duplicate){
+    const msg=`سبق تسجيل هذه العملية:<br><br>
+      <strong>${duplicate.type}</strong> ${duplicate.flag||''} ${duplicate.currency}<br>
+      المبلغ: <strong>${parseFloat(duplicate.sar).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong><br>
+      السعر المنفّذ: <strong>${duplicate.price}</strong><br>
+      التوقيت: ${duplicate.date}<br><br>
+      هل تريد حفظها مجدداً؟`;
+    const confirmed = await showConfirm(msg);
+    if(!confirmed) return;
+  }
+  try{
+    const insertedId = await db.txs.add(tx);
+    tx.id = insertedId;
+  }catch(e){}
+  txs.unshift(tx);
+  const rwEl=document.getElementById('result-words');
+  const rwText=document.getElementById('result-words-text');
+  rwEl.style.display='block';
+  rwText.textContent=`${tafqeet} ${c.name}`;
+  saveToSupabase(tx).then(()=>loadCloudHistory());
+  showToast('✅ تم حفظ العملية بنجاح');
+  renderTxs();
+}
+
+function renderTxs(){
+  const el=document.getElementById('tx-list');
+  if(!txs.length){el.innerHTML='<div class="empty">لا توجد عمليات بعد</div>';return;}
+  el.innerHTML=txs.map((t,i)=>{
+    const isBuy=t.type==='شراء';
+    const typeClass=isBuy?'type-buy':'type-sell';
+    const borderClass=isBuy?'buy':'sell';
+    const arrow=isBuy?'←':'→';
+    return `
+    <div class="tx ${borderClass}">
+      <div class="tx-info">
+        <strong class="${typeClass}">${t.type} ${arrow}</strong>&nbsp;
+        ${t.flag||'🏳️'} ${t.currency||'SAR'} &nbsp;•&nbsp; 🕐 ${t.date}<br>
+        💵 المبلغ: <strong>${parseFloat(t.sar).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong>
+        ${parseFloat(t.comm)>0?`| عمولة: ${t.comm}% (<span style="color:#f9a825">${parseFloat(t.commAmt).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</span>)`:''}<br>
+        📊 الصافي: <strong style="color:#4caf50">${parseFloat(t.net).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong>
+        &nbsp;⇄&nbsp; <strong style="color:#4a9eff">${parseFloat(t.foreign).toLocaleString('en-US',{minimumFractionDigits:CURRENCIES[t.currency]?.decimals??2})} ${t.currency}</strong><br>
+        💱 السعر المنفّذ: <span style="color:#a78bfa">${t.price}</span> &nbsp;|&nbsp; مرجعي: ${t.rate}<br>
+        <span class="tx-tafqeet">( ${t.tafqeet||numToAr(parseFloat(t.foreign))} ${t.currencyName||CURRENCIES[t.currency]?.name||t.currency} )</span>
+      </div>
+      <button class="del-btn" onclick="delTx(${i})">حذف</button>
+    </div>`;
+  }).join('');
+}
+
+async function delTx(i){
+  if(!confirm('هل أنت متأكد من حذف هذه العملية؟'))return;
+  const tx=txs[i];
+  txs.splice(i,1);
+  try{if(tx.id) await db.txs.delete(tx.id);}catch(e){}
+  renderTxs();
+}
+
+function saveLog(){
+  const lines=txs.map(t=>[
+    `[${t.date}]`,
+    `${t.type} | ${t.flag||''} ${t.currency}`,
+    `المبلغ: ${t.sar} ر.س`,
+    `الصافي: ${t.net} ر.س`,
+    `السعر المنفّذ: ${t.price}`,
+    `التفقيط: ${t.tafqeet||numToAr(parseFloat(t.net))} ريالاً سعودياً`
+  ].join(' | ')).join('\n');
+  const blob=new Blob([`سجل العمليات\n${'='.repeat(60)}\n\n${lines}`],{type:'text/plain;charset=UTF-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`سجل_الصرف_${Date.now()}.txt`;a.click();
+}
+
+async function clearLog(){
+  if(!confirm('حذف جميع السجلات؟'))return;
+  txs=[];
+  try{await db.txs.clear();}catch(e){}
+  const rwEl=document.getElementById('result-words');
+  if(rwEl) rwEl.style.display='none';
+  renderTxs();
+}
+
+init();
+loadCloudHistory();
+</script>
+</body>
+</html>
