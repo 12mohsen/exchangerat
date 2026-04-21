@@ -105,6 +105,12 @@
   .cloud-dot{width:7px;height:7px;border-radius:50%;background:#555}
   .cloud-dot.ok{background:#4caf50;box-shadow:0 0 6px #4caf50}
   .cloud-dot.err{background:#f44336}
+  .cloud-act{background:transparent;border:1px solid #2a2a3e;border-radius:6px;padding:3px 7px;font-size:.82rem;cursor:pointer;margin:0 2px;transition:.15s}
+  .cloud-act:hover{transform:translateY(-1px)}
+  .cloud-act.del{color:#f44336;border-color:rgba(244,67,54,.4)}
+  .cloud-act.del:hover{background:rgba(244,67,54,.15)}
+  .cloud-act.restore{color:#4caf50;border-color:rgba(76,175,80,.4)}
+  .cloud-act.restore:hover{background:rgba(76,175,80,.15)}
 </style>
 </head>
 <body>
@@ -205,8 +211,9 @@
         <div class="cloud-title">☁️ تاريخ العمليات السحابية</div>
         <div class="cloud-status"><span class="cloud-dot" id="cloud-dot"></span><span id="cloud-status-text" style="color:#555">جاري الاتصال...</span></div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="cloud-refresh" onclick="loadCloudHistory()">↻ تحديث</button>
+        <button class="cloud-refresh" id="cloud-trash-btn" onclick="toggleTrashView()">🗑 المحذوفات</button>
         <button class="cloud-refresh" id="cloud-toggle-btn" onclick="toggleCloud()">🙈 إخفاء</button>
       </div>
     </div>
@@ -266,14 +273,74 @@ async function saveToSupabase(tx){
   }catch(e){ console.error('saveToSupabase exception:',e); }
 }
 
+let cloudView='active'; // 'active' or 'trash'
+
+async function purgeOldDeleted(){
+  try{
+    const cutoff=new Date(Date.now()-30*24*60*60*1000).toISOString();
+    await fetch(
+      SUPABASE_URL+'/rest/v1/exchange_history?deleted_at=lt.'+encodeURIComponent(cutoff),
+      {method:'DELETE', headers: SB_HEADERS}
+    );
+  }catch(e){}
+}
+
+async function softDeleteCloud(id){
+  if(!confirm('حذف هذه العملية؟ يمكن استعادتها خلال 30 يوماً من سلة المحذوفات.'))return;
+  try{
+    const res=await fetch(
+      SUPABASE_URL+'/rest/v1/exchange_history?id=eq.'+id,
+      {method:'PATCH', headers:SB_HEADERS, body:JSON.stringify({deleted_at:new Date().toISOString()})}
+    );
+    if(!res.ok){ const t=await res.text(); console.error('delete err:',t); showToast('⚠️ تعذّر الحذف','warn'); return; }
+    showToast('🗑️ تم الحذف • يمكن الاستعادة خلال 30 يوماً');
+    loadCloudHistory();
+  }catch(e){ console.error(e); }
+}
+
+async function restoreCloud(id){
+  try{
+    const res=await fetch(
+      SUPABASE_URL+'/rest/v1/exchange_history?id=eq.'+id,
+      {method:'PATCH', headers:SB_HEADERS, body:JSON.stringify({deleted_at:null})}
+    );
+    if(!res.ok){ const t=await res.text(); console.error('restore err:',t); showToast('⚠️ تعذّر الاستعادة','warn'); return; }
+    showToast('♻️ تمت الاستعادة بنجاح');
+    loadCloudHistory();
+  }catch(e){ console.error(e); }
+}
+
+async function hardDeleteCloud(id){
+  if(!confirm('حذف نهائي لا يمكن التراجع عنه. متابعة؟'))return;
+  try{
+    const res=await fetch(
+      SUPABASE_URL+'/rest/v1/exchange_history?id=eq.'+id,
+      {method:'DELETE', headers:SB_HEADERS}
+    );
+    if(!res.ok){ showToast('⚠️ تعذّر الحذف','warn'); return; }
+    showToast('✅ حُذفت نهائياً');
+    loadCloudHistory();
+  }catch(e){ console.error(e); }
+}
+
+function toggleTrashView(){
+  cloudView = (cloudView==='active')?'trash':'active';
+  const btn=document.getElementById('cloud-trash-btn');
+  if(btn) btn.textContent = (cloudView==='trash') ? '↩ العودة' : '🗑 المحذوفات';
+  loadCloudHistory();
+}
+
 async function loadCloudHistory(){
   const el=document.getElementById('cloud-list');
   const dot=document.getElementById('cloud-dot');
   const statusTxt=document.getElementById('cloud-status-text');
   el.innerHTML='<div class="cloud-empty">جاري التحميل...</div>';
+  purgeOldDeleted();
+  const isTrash = cloudView==='trash';
+  const filter = isTrash ? 'deleted_at=not.is.null' : 'deleted_at=is.null';
   try{
     const res = await fetch(
-      SUPABASE_URL+'/rest/v1/exchange_history?select=*&order=created_at.desc&limit=10',
+      SUPABASE_URL+'/rest/v1/exchange_history?select=*&'+filter+'&order=created_at.desc&limit=20',
       {headers: SB_HEADERS}
     );
     if(!res.ok){
@@ -285,18 +352,32 @@ async function loadCloudHistory(){
     dot.className='cloud-dot ok';
     statusTxt.textContent='متصل • آخر تحديث: '+new Date().toLocaleTimeString('ar-SA');
     statusTxt.style.color='#4caf50';
-    if(!data||!data.length){el.innerHTML='<div class="cloud-empty">لا توجد عمليات سحابية بعد</div>';return;}
+    if(!data||!data.length){
+      el.innerHTML=`<div class="cloud-empty">${isTrash?'🗑️ سلة المحذوفات فارغة':'لا توجد عمليات سحابية بعد'}</div>`;
+      return;
+    }
     el.innerHTML=`<table class="cloud-table">
       <thead><tr>
         <th>العملة</th>
         <th>المبلغ (ر.س)</th><th>المُحوَّل</th>
         <th>سعر الصرف</th><th>التفقيط</th>
         <th>التاريخ</th>
+        <th>${isTrash?'متبقي':''}</th>
+        <th></th>
       </tr></thead>
       <tbody>${data.map(r=>{
         const cur=r.target_currency||'';
         const info=CURRENCIES[cur]||{};
         const dateStr=r.created_at?new Date(r.created_at).toLocaleString('ar-SA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+        let remaining='';
+        if(isTrash && r.deleted_at){
+          const days=Math.max(0, 30 - Math.floor((Date.now()-new Date(r.deleted_at).getTime())/86400000));
+          remaining=`<span style="color:${days<7?'#f44336':'#f9a825'};font-weight:700">${days} يوم</span>`;
+        }
+        const actions = isTrash
+          ? `<button class="cloud-act restore" onclick="restoreCloud(${r.id})" title="استعادة">♻️</button>
+             <button class="cloud-act del" onclick="hardDeleteCloud(${r.id})" title="حذف نهائي">✖</button>`
+          : `<button class="cloud-act del" onclick="softDeleteCloud(${r.id})" title="حذف">🗑️</button>`;
         return `<tr>
           <td>${info.flag||''} ${cur}</td>
           <td>${parseFloat(r.base_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
@@ -304,6 +385,8 @@ async function loadCloudHistory(){
           <td style="color:#a78bfa">${parseFloat(r.exchange_rate||0)}</td>
           <td><span class="cloud-tafqeet">${r.arabic_text||'—'}</span></td>
           <td style="color:#666;font-size:.7rem">${dateStr}</td>
+          <td style="font-size:.7rem">${remaining}</td>
+          <td style="white-space:nowrap">${actions}</td>
         </tr>`;
       }).join('')}</tbody>
     </table>`;
