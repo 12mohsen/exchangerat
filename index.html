@@ -148,9 +148,12 @@
         </select>
       </div>
       <div class="input-group">
-        <label for="rate">سعر الصرف (ريال لكل وحدة)</label>
+        <label for="rate">سعر الصرف (ريال لكل وحدة)
+          <button type="button" onclick="fetchLiveRates(true)" id="live-btn" style="background:linear-gradient(135deg,#1e5f3a,#2e7d32);border:none;color:#fff;border-radius:6px;padding:2px 8px;font-size:.7rem;cursor:pointer;margin-right:6px">🟢 حي</button>
+        </label>
         <input type="number" id="rate" step="0.0001" min="0" oninput="calc('rate')">
         <div class="rate-hint" id="rate-hint"></div>
+        <div class="rate-hint" id="live-status" style="color:#4caf50"></div>
       </div>
     </div>
 
@@ -591,11 +594,54 @@ async function init(){
 function onCurrencyChange(resetRate=true){
   const code=document.getElementById('currency').value;
   const c=CURRENCIES[code];
-  if(resetRate) document.getElementById('rate').value=c.rate;
+  if(resetRate){
+    const live = LIVE_RATES[code];
+    document.getElementById('rate').value = live || c.rate;
+  }
   document.getElementById('foreign-flag').textContent=c.flag;
   document.getElementById('foreign-name').textContent=code;
   document.getElementById('rate-hint').textContent=`1 ${code} = ${parseFloat(document.getElementById('rate').value).toLocaleString('en-US')} ر.س`;
   calc('sar');
+}
+
+let LIVE_RATES = {};
+let LIVE_UPDATED_AT = 0;
+
+async function fetchLiveRates(showToastMsg=false){
+  const status=document.getElementById('live-status');
+  const btn=document.getElementById('live-btn');
+  if(status) status.textContent='⏳ جاري جلب الأسعار العالمية...';
+  if(btn) btn.style.opacity='.6';
+  try{
+    const res = await fetch('https://open.er-api.com/v6/latest/SAR');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const j = await res.json();
+    if(j.result!=='success' || !j.rates) throw new Error('bad response');
+    // j.rates.USD = USD per 1 SAR  =>  SAR per 1 USD = 1/rate
+    LIVE_RATES = {};
+    for(const code in CURRENCIES){
+      if(j.rates[code]){
+        LIVE_RATES[code] = 1 / j.rates[code];
+        CURRENCIES[code].rate = LIVE_RATES[code];
+      }
+    }
+    LIVE_UPDATED_AT = Date.now();
+    const t = new Date(j.time_last_update_unix*1000).toLocaleString('ar-SA',{hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'});
+    if(status) status.textContent='🟢 أسعار حية • آخر تحديث من السوق: '+t;
+    // update current rate input
+    const code = document.getElementById('currency').value;
+    if(LIVE_RATES[code]){
+      document.getElementById('rate').value = LIVE_RATES[code].toFixed(6);
+      calc('rate');
+    }
+    if(showToastMsg) showToast('✅ تم تحديث الأسعار من السوق العالمي');
+  }catch(e){
+    console.error('live rates err:',e);
+    if(status){ status.textContent='⚠️ تعذّر جلب الأسعار الحية'; status.style.color='#f9a825'; }
+    if(showToastMsg) showToast('⚠️ تعذّر جلب الأسعار','warn');
+  }finally{
+    if(btn) btn.style.opacity='1';
+  }
 }
 
 async function saveSettings(){
@@ -839,6 +885,8 @@ function toggleCloud(){
 
 init();
 loadCloudHistory();
+fetchLiveRates();
+setInterval(fetchLiveRates, 10*60*1000); // تحديث تلقائي كل 10 دقائق
 </script>
 </body>
 </html>
