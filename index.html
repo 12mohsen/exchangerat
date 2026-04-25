@@ -210,6 +210,9 @@ window.Dexie = Dexie;
   .cloud-act.del:hover{background:rgba(244,67,54,.15)}
   .cloud-act.restore{color:#4caf50;border-color:rgba(76,175,80,.4)}
   .cloud-act.restore:hover{background:rgba(76,175,80,.15)}
+  .cloud-row-selected td{background:rgba(74,158,255,.08)!important}
+  .cloud-row-cb{width:18px;height:18px;accent-color:#4a9eff;cursor:pointer}
+  #cloud-select-btn.active{background:#1e3a5f;color:#4a9eff;border-color:#4a9eff}
 
   .auth-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:99999;background:radial-gradient(ellipse at center,#0d1428 0%,#050a18 100%);padding:20px}
   .auth-box{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:20px;padding:32px 28px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6);position:relative;overflow:hidden}
@@ -426,8 +429,24 @@ window.Dexie = Dexie;
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="cloud-refresh" onclick="loadCloudHistory()">↻ تحديث</button>
+        <button class="cloud-refresh" id="cloud-select-btn" onclick="toggleSelectMode()">☑️ تحديد</button>
         <button class="cloud-refresh" id="cloud-trash-btn" onclick="toggleTrashView()">🗑 المحذوفات</button>
         <button class="cloud-refresh" id="cloud-toggle-btn" onclick="toggleCloud()">🙈 إخفاء</button>
+      </div>
+    </div>
+    <div id="cloud-bulk-bar" style="display:none;background:#1a1a2e;border:1px solid #4a9eff;border-radius:10px;padding:10px 14px;margin-bottom:10px;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.82rem;color:#4a9eff;font-weight:700">
+          <input type="checkbox" id="cloud-select-all" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4a9eff;cursor:pointer">
+          تحديد الكل
+        </label>
+        <span id="cloud-selected-count" style="font-size:.78rem;color:#aaa">0 محدد</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="cloud-bulk-actions">
+        <button onclick="bulkDeleteSelected()" id="bulk-delete-btn" style="background:linear-gradient(135deg,#c62828,#f44336);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.82rem;font-weight:700;cursor:pointer;transition:.2s" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">🗑️ حذف المحدد</button>
+        <button onclick="bulkRestoreSelected()" id="bulk-restore-btn" style="display:none;background:linear-gradient(135deg,#2e7d32,#4caf50);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.82rem;font-weight:700;cursor:pointer;transition:.2s" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">♻️ استعادة المحدد</button>
+        <button onclick="bulkHardDeleteSelected()" id="bulk-hard-delete-btn" style="display:none;background:linear-gradient(135deg,#6a1010,#c62828);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.82rem;font-weight:700;cursor:pointer;transition:.2s" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">✖ حذف نهائي</button>
+        <button onclick="toggleSelectMode(false)" style="background:#1e1e2e;color:#888;border:1px solid #2a2a3e;border-radius:8px;padding:8px 14px;font-size:.82rem;cursor:pointer">إلغاء</button>
       </div>
     </div>
     <div class="cloud-table-wrap" id="cloud-table-wrap">
@@ -742,6 +761,18 @@ function toggleTrashView(){
   cloudView = (cloudView==='active')?'trash':'active';
   const btn=document.getElementById('cloud-trash-btn');
   if(btn) btn.textContent = (cloudView==='trash') ? '↩ العودة' : '🗑 المحذوفات';
+  // إذا كان وضع التحديد مفعلاً، حدّث الأزرار حسب العرض الجديد
+  if(cloudSelectMode){
+    const isTrash = cloudView==='trash';
+    const delBtn = document.getElementById('bulk-delete-btn');
+    const restoreBtn = document.getElementById('bulk-restore-btn');
+    const hardDelBtn = document.getElementById('bulk-hard-delete-btn');
+    if(delBtn) delBtn.style.display = isTrash ? 'none' : '';
+    if(restoreBtn) restoreBtn.style.display = isTrash ? '' : 'none';
+    if(hardDelBtn) hardDelBtn.style.display = isTrash ? '' : 'none';
+    selectedCloudIds.clear();
+    updateSelectedCount();
+  }
   loadCloudHistory();
 }
 
@@ -774,12 +805,13 @@ async function loadCloudHistory(){
     }
     el.innerHTML=`<table class="cloud-table">
       <thead><tr>
+        ${cloudSelectMode?'<th style="width:36px;text-align:center"></th>':''}
         <th>العملة</th>
         <th>المبلغ (ر.س)</th><th>المُحوَّل</th>
         <th>سعر الصرف</th><th>التفقيط</th>
         <th>التاريخ</th>
         <th>${isTrash?'متبقي':''}</th>
-        <th></th>
+        ${cloudSelectMode?'':'<th></th>'}
       </tr></thead>
       <tbody>${data.map(r=>{
         const cur=r.target_currency||'';
@@ -790,11 +822,16 @@ async function loadCloudHistory(){
           const days=Math.max(0, 30 - Math.floor((Date.now()-new Date(r.deleted_at).getTime())/86400000));
           remaining=`<span style="color:${days<7?'#f44336':'#f9a825'};font-weight:700">${days} يوم</span>`;
         }
-        const actions = isTrash
-          ? `<button class="cloud-act restore" onclick="restoreCloud(${r.id})" title="استعادة">♻️</button>
-             <button class="cloud-act del" onclick="hardDeleteCloud(${r.id})" title="حذف نهائي">✖</button>`
-          : `<button class="cloud-act del" onclick="softDeleteCloud(${r.id})" title="حذف">🗑️</button>`;
-        return `<tr>
+        const cbCell = cloudSelectMode
+          ? `<td style="text-align:center"><input type="checkbox" class="cloud-row-cb" data-id="${r.id}" ${selectedCloudIds.has(r.id)?'checked':''} onchange="toggleRowSelect(this)" style="width:18px;height:18px;accent-color:#4a9eff;cursor:pointer"></td>`
+          : '';
+        const actions = cloudSelectMode ? '' : isTrash
+          ? `<td style="white-space:nowrap"><button class="cloud-act restore" onclick="restoreCloud(${r.id})" title="استعادة">♻️</button>
+             <button class="cloud-act del" onclick="hardDeleteCloud(${r.id})" title="حذف نهائي">✖</button></td>`
+          : `<td style="white-space:nowrap"><button class="cloud-act del" onclick="softDeleteCloud(${r.id})" title="حذف">🗑️</button></td>`;
+        const isSelected = selectedCloudIds.has(r.id);
+        return `<tr class="${isSelected?'cloud-row-selected':''}" style="cursor:${cloudSelectMode?'pointer':''}" ${cloudSelectMode?`onclick="const cb=this.querySelector('.cloud-row-cb');if(cb){cb.checked=!cb.checked;toggleRowSelect(cb)}"`:''}>
+          ${cbCell}
           <td>${info.flag||''} ${cur}</td>
           <td>${parseFloat(r.base_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
           <td style="color:#4a9eff;font-weight:700">${parseFloat(r.converted_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
@@ -802,7 +839,7 @@ async function loadCloudHistory(){
           <td><span class="cloud-tafqeet">${r.arabic_text||'—'}</span></td>
           <td style="color:#666;font-size:.7rem">${dateStr}</td>
           <td style="font-size:.7rem">${remaining}</td>
-          <td style="white-space:nowrap">${actions}</td>
+          ${actions}
         </tr>`;
       }).join('')}</tbody>
     </table>`;
@@ -1305,6 +1342,117 @@ function toggleCloud(){
   const hidden=wrap.style.display==='none';
   wrap.style.display=hidden?'':'none';
   btn.textContent=hidden?'🙈 إخفاء':'👁 إظهار';
+}
+
+let cloudSelectMode = false;
+let selectedCloudIds = new Set();
+
+function toggleSelectMode(force){
+  cloudSelectMode = force !== undefined ? force : !cloudSelectMode;
+  selectedCloudIds.clear();
+  const bar = document.getElementById('cloud-bulk-bar');
+  const btn = document.getElementById('cloud-select-btn');
+  bar.style.display = cloudSelectMode ? 'flex' : 'none';
+  if(btn) btn.classList.toggle('active', cloudSelectMode);
+  // Show correct action buttons based on view
+  const isTrash = cloudView === 'trash';
+  const delBtn = document.getElementById('bulk-delete-btn');
+  const restoreBtn = document.getElementById('bulk-restore-btn');
+  const hardDelBtn = document.getElementById('bulk-hard-delete-btn');
+  if(delBtn) delBtn.style.display = isTrash ? 'none' : '';
+  if(restoreBtn) restoreBtn.style.display = isTrash ? '' : 'none';
+  if(hardDelBtn) hardDelBtn.style.display = isTrash ? '' : 'none';
+  updateSelectedCount();
+  loadCloudHistory();
+}
+
+function updateSelectedCount(){
+  const el = document.getElementById('cloud-selected-count');
+  if(el) el.textContent = selectedCloudIds.size + ' محدد';
+  const allCb = document.getElementById('cloud-select-all');
+  if(allCb){
+    const allRows = document.querySelectorAll('.cloud-row-cb');
+    allCb.checked = allRows.length > 0 && selectedCloudIds.size === allRows.length;
+    allCb.indeterminate = selectedCloudIds.size > 0 && selectedCloudIds.size < allRows.length;
+  }
+}
+
+function toggleSelectAll(checked){
+  document.querySelectorAll('.cloud-row-cb').forEach(cb=>{
+    cb.checked = checked;
+    const id = parseInt(cb.dataset.id);
+    if(checked) selectedCloudIds.add(id);
+    else selectedCloudIds.delete(id);
+    cb.closest('tr').classList.toggle('cloud-row-selected', checked);
+  });
+  updateSelectedCount();
+}
+
+function toggleRowSelect(cb){
+  const id = parseInt(cb.dataset.id);
+  if(cb.checked) selectedCloudIds.add(id);
+  else selectedCloudIds.delete(id);
+  cb.closest('tr').classList.toggle('cloud-row-selected', cb.checked);
+  updateSelectedCount();
+}
+
+async function bulkDeleteSelected(){
+  if(!selectedCloudIds.size){ showToast('⚠️ لم تحدد أي عملية','warn'); return; }
+  const confirmed = await showConfirm(`سيتم حذف <strong>${selectedCloudIds.size}</strong> عملية.<br>هل أنت متأكد؟`,{title:'حذف المحدد',icon:'🗑️',yesText:'نعم، احذف',noText:'إلغاء'});
+  if(!confirmed) return;
+  let done=0;
+  for(const id of selectedCloudIds){
+    try{
+      await fetch(SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id, {
+        method:'PATCH',
+        headers:{...SB_HEADERS,'Content-Type':'application/json'},
+        body:JSON.stringify({deleted_at:new Date().toISOString()})
+      });
+      done++;
+    }catch(e){}
+  }
+  selectedCloudIds.clear();
+  showToast('✅ تم حذف '+done+' عملية');
+  loadCloudHistory();
+}
+
+async function bulkRestoreSelected(){
+  if(!selectedCloudIds.size){ showToast('⚠️ لم تحدد أي عملية','warn'); return; }
+  const confirmed = await showConfirm(`سيتم استعادة <strong>${selectedCloudIds.size}</strong> عملية.<br>هل أنت متأكد؟`,{title:'استعادة المحدد',icon:'♻️',yesText:'نعم، استعد',noText:'إلغاء'});
+  if(!confirmed) return;
+  let done=0;
+  for(const id of selectedCloudIds){
+    try{
+      await fetch(SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id, {
+        method:'PATCH',
+        headers:{...SB_HEADERS,'Content-Type':'application/json'},
+        body:JSON.stringify({deleted_at:null})
+      });
+      done++;
+    }catch(e){}
+  }
+  selectedCloudIds.clear();
+  showToast('✅ تم استعادة '+done+' عملية');
+  loadCloudHistory();
+}
+
+async function bulkHardDeleteSelected(){
+  if(!selectedCloudIds.size){ showToast('⚠️ لم تحدد أي عملية','warn'); return; }
+  const confirmed = await showConfirm(`سيتم الحذف النهائي لـ <strong>${selectedCloudIds.size}</strong> عملية.<br>⚠️ لا يمكن التراجع عن هذا الإجراء!`,{title:'حذف نهائي',icon:'✖',yesText:'نعم، احذف نهائياً',noText:'إلغاء'});
+  if(!confirmed) return;
+  let done=0;
+  for(const id of selectedCloudIds){
+    try{
+      await fetch(SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id, {
+        method:'DELETE',
+        headers:SB_HEADERS
+      });
+      done++;
+    }catch(e){}
+  }
+  selectedCloudIds.clear();
+  showToast('✅ تم الحذف النهائي لـ '+done+' عملية');
+  loadCloudHistory();
 }
 
 requireAuth();
