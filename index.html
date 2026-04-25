@@ -1015,8 +1015,9 @@ function onCurrencyChange(resetRate=true){
   const code=document.getElementById('currency').value;
   const c=CURRENCIES[code];
   if(resetRate){
-    const live = LIVE_RATES[code];
-    document.getElementById('rate').value = live || c.rate;
+    const live = LIVE_RATES[code] || c.rate;
+    const rateDecimals = live >= 1 ? 4 : live >= 0.01 ? 6 : live >= 0.0001 ? 8 : 10;
+    document.getElementById('rate').value = parseFloat(live.toFixed(rateDecimals));
   }
   document.getElementById('foreign-flag').textContent=c.flag;
   document.getElementById('foreign-name').textContent=code;
@@ -1048,7 +1049,9 @@ async function fetchLiveRates(showToastMsg=false){
     // update current rate input
     const code = document.getElementById('currency').value;
     if(LIVE_RATES[code]){
-      document.getElementById('rate').value = LIVE_RATES[code].toFixed(6);
+      const rateVal = LIVE_RATES[code];
+      const rateDecimals = rateVal >= 1 ? 4 : rateVal >= 0.01 ? 6 : rateVal >= 0.0001 ? 8 : 10;
+      document.getElementById('rate').value = parseFloat(rateVal.toFixed(rateDecimals));
       calc('rate');
     }
     if(showToastMsg) showToast('✅ تم تحديث الأسعار من السوق العالمي');
