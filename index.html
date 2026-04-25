@@ -5,9 +5,99 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>input,textarea{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif!important}</style>
 <title>سعر الصرف</title>
-<script src="https://unpkg.com/dexie@3.2.4/dist/dexie.min.js"></script>
-<script src="https://unpkg.com/n2words@1.18.0/dist/n2words.js" onerror="window._n2wordsFaild=true"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// === Dexie Polyfill: يعمل بدون إنترنت باستخدام IndexedDB مباشرة أو ذاكرة ===
+class Dexie {
+  constructor(name){ this.name=name; this._vers=[]; this._stores={}; this._db=null; this._mem={}; this._ready=null; }
+  version(v){ const s={stores:(def)=>{Object.assign(this._stores,def);return s;}}; this._vers.push(v); return s; }
+  _open(){
+    if(this._ready) return this._ready;
+    this._ready = new Promise(resolve=>{
+      try{
+        const req=indexedDB.open(this.name,this._vers.length||1);
+        req.onupgradeneeded=e=>{
+          const db=e.target.result;
+          Object.entries(this._stores).forEach(([tbl,schema])=>{
+            if(!db.objectStoreNames.contains(tbl)){
+              const pk=schema.split(',')[0].replace('++','').trim();
+              db.createObjectStore(tbl,{keyPath:pk||'id',autoIncrement:schema.includes('++')});
+            }
+          });
+        };
+        req.onsuccess=e=>{this._db=e.target.result;resolve(true);};
+        req.onerror=()=>resolve(false);
+      }catch(e){resolve(false);}
+    });
+    return this._ready;
+  }
+  _tbl(name){
+    return {
+      orderBy:(k)=>({reverse:()=>({toArray:async()=>{
+        await this._open();
+        if(!this._db) return Object.values(this._mem[name]||{}).reverse();
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readonly');
+          const req=tx.objectStore(name).getAll();
+          req.onsuccess=()=>r((req.result||[]).reverse());
+          req.onerror=()=>r([]);
+        });
+      }})}),
+      get:async(k)=>{
+        await this._open();
+        if(!this._db) return (this._mem[name]||{})[k];
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readonly');
+          const req=tx.objectStore(name).get(k);
+          req.onsuccess=()=>r(req.result);
+          req.onerror=()=>r(null);
+        });
+      },
+      put:async(obj)=>{
+        await this._open();
+        if(!this._db){if(!this._mem[name])this._mem[name]={};const k=obj.id||obj.key||Date.now();this._mem[name][k]=obj;return k;}
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readwrite');
+          const req=tx.objectStore(name).put(obj);
+          req.onsuccess=()=>r(req.result);
+          req.onerror=()=>r(null);
+        });
+      },
+      add:async(obj)=>{
+        await this._open();
+        if(!this._db){if(!this._mem[name])this._mem[name]={};const k=Date.now();obj.id=k;this._mem[name][k]=obj;return k;}
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readwrite');
+          const req=tx.objectStore(name).add(obj);
+          req.onsuccess=()=>r(req.result);
+          req.onerror=()=>r(null);
+        });
+      },
+      delete:async(k)=>{
+        await this._open();
+        if(!this._db){delete(this._mem[name]||{})[k];return;}
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readwrite');
+          tx.objectStore(name).delete(k);
+          tx.oncomplete=r;
+        });
+      },
+      toArray:async()=>{
+        await this._open();
+        if(!this._db) return Object.values(this._mem[name]||{});
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readonly');
+          const req=tx.objectStore(name).getAll();
+          req.onsuccess=()=>r(req.result||[]);
+          req.onerror=()=>r([]);
+        });
+      }
+    };
+  }
+  get txs(){ return this._tbl('txs'); }
+  get settings(){ return this._tbl('settings'); }
+}
+window.Dexie = Dexie;
+</script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif}
   body{background:#050a18;min-height:100vh;padding:20px;direction:rtl;color:#fff;position:relative;overflow-x:hidden}
@@ -151,14 +241,14 @@
       <div class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">تسجيل الدخول</div>
       <div class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')">حساب جديد</div>
     </div>
-    <form id="auth-form" onsubmit="event.preventDefault();submitAuth();">
+    <div id="auth-form">
       <div class="auth-field">
         <label>اسم المستخدم</label>
-        <input type="text" id="auth-user" autocomplete="username" required minlength="2" placeholder="مثال: محسن أو mohsen">
+        <input type="text" id="auth-user" autocomplete="username" required minlength="2" placeholder="مثال: محسن أو mohsen" onkeydown="if(event.key==='Enter')submitAuth()">
       </div>
       <div class="auth-field">
         <label>كلمة المرور</label>
-        <input type="password" id="auth-pass" autocomplete="current-password" required minlength="4" placeholder="••••••••">
+        <input type="password" id="auth-pass" autocomplete="current-password" required minlength="4" placeholder="••••••••" onkeydown="if(event.key==='Enter')submitAuth()">
       </div>
       <div class="auth-field" id="hint-field" style="display:none">
         <label>تلميح لكلمة المرور <span style="color:#666;font-weight:400">(يساعدك إذا نسيتها)</span></label>
@@ -168,12 +258,12 @@
         <input type="checkbox" id="auth-remember" checked style="width:16px;height:16px;accent-color:#4a9eff;cursor:pointer">
         <span>تذكّرني — إبقاء الدخول لمدة 30 يوماً</span>
       </label>
-      <button type="submit" class="auth-btn" id="auth-submit">دخول</button>
+      <button type="button" class="auth-btn" id="auth-submit" onclick="submitAuth()">دخول</button>
       <div style="text-align:center;margin-top:10px">
         <a href="#" id="forgot-link" onclick="event.preventDefault();showHint();" style="color:#4a9eff;font-size:.82rem;text-decoration:none">نسيت كلمة المرور؟</a>
       </div>
       <div class="auth-msg" id="auth-msg"></div>
-    </form>
+    </div>
   </div>
 </div>
 
@@ -210,7 +300,7 @@
           <option value="MYR">🇲🇾 رينغيت ماليزي (MYR)</option>
           <option value="PHP">🇵🇭 بيزو فلبيني (PHP)</option>
           <option value="BDT">🇧🇩 تاكا بنغلاديشية (BDT)</option>
-          <option value="ETH">🇪🇹 بر إثيوبي (ETB)</option>
+          <option value="ETB">🇪🇹 بر إثيوبي (ETB)</option>
           <option value="NGN">🇳🇬 نيرة نيجيرية (NGN)</option>
           <option value="CNY">🇨🇳 يوان صيني (CNY)</option>
           <option value="JPY">🇯🇵 ين ياباني (JPY)</option>
@@ -317,11 +407,45 @@
 </div>
 
 <script>
+// === Safe Storage: يتجاوز حظر localStorage في Edge/file:// ===
+const SafeStore = {
+  _mem: {},
+  set(key, val) {
+    try { localStorage.setItem(key, val); return; } catch(e){}
+    try { sessionStorage.setItem(key, val); return; } catch(e){}
+    // fallback: cookie
+    try {
+      const expires = new Date(Date.now()+30*24*60*60*1000).toUTCString();
+      document.cookie = `${key}=${encodeURIComponent(val)};expires=${expires};path=/`;
+    } catch(e){}
+    this._mem[key] = val;
+  },
+  get(key) {
+    try { const v=localStorage.getItem(key); if(v!==null)return v; } catch(e){}
+    try { const v=sessionStorage.getItem(key); if(v!==null)return v; } catch(e){}
+    try {
+      const m = document.cookie.match('(^|;)\\s*'+key+'=([^;]+)');
+      if(m) return decodeURIComponent(m[2]);
+    } catch(e){}
+    return this._mem[key] || null;
+  },
+  remove(key) {
+    try { localStorage.removeItem(key); } catch(e){}
+    try { sessionStorage.removeItem(key); } catch(e){}
+    try { document.cookie = `${key}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`; } catch(e){}
+    delete this._mem[key];
+  }
+};
+/*
+  ملاحظة أمنية:
+  - SUPABASE_KEY مفتاح anon عام، الحماية تأتي من RLS في Supabase.
+  - للحماية الأقوى: استخدم Supabase Edge Function للتحقق من كلمة المرور.
+*/
 const SUPABASE_URL = 'https://tvbuvwjkojhqcxhyehfs.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2YnV2d2prb2pocWN4aHllaGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3MDE4MTUsImV4cCI6MjA5MjI3NzgxNX0.egwryYwKu_Bicl_koaYXaKGBoxz42c6k4VkMD9aZSWQ';
 
 let AUTH = null;
-try{ AUTH = JSON.parse(localStorage.getItem('sb_auth')||sessionStorage.getItem('sb_auth')||'null'); }catch(e){}
+try{ AUTH = JSON.parse(SafeStore.get('sb_auth')||'null'); }catch(e){}
 
 function getSBHeaders(){
   const token = AUTH?.access_token || SUPABASE_KEY;
@@ -375,30 +499,51 @@ async function submitAuth(){
       const res = await fetch(SUPABASE_URL+'/rest/v1/users', {
         method:'POST',
         headers:{ ...getSBHeaders(), 'Prefer':'return=representation' },
-        body: JSON.stringify({ username, password_hash:pwdHash, hint:hint||null, app_origin:'سعر الصرف' })
+        body: JSON.stringify({ username, password_hash:pwdHash, password_hint:hint||null, app_origin: 'sarf_history' })
       });
       const data = await res.json();
       if(!res.ok){
-        if(data?.code==='23505'){ setAuthMsg('⚠️ اسم المستخدم موجود مسبقاً','err'); return; }
-        setAuthMsg('⚠️ '+(data?.message||'فشل إنشاء الحساب'),'err'); return;
+        console.error('Signup error full:', JSON.stringify(data));
+        if(data?.code==='23505'||data?.message?.includes('duplicate')){
+          setAuthMsg('⚠️ اسم المستخدم موجود مسبقاً','err'); return;
+        }
+        // عمود غير موجود - جرب بدون hint
+        if(data?.message?.includes('hint')){
+          const res2 = await fetch(SUPABASE_URL+'/rest/v1/users', {
+            method:'POST',
+            headers:{ ...getSBHeaders(), 'Prefer':'return=representation' },
+            body: JSON.stringify({ username, password_hash:pwdHash, app_origin: 'sarf_history' })
+          });
+          const data2 = await res2.json();
+          if(!res2.ok){ setAuthMsg('⚠️ '+(data2?.message||'فشل إنشاء الحساب — تحقق من أعمدة جدول users'),'err'); return; }
+          loginSuccess(Array.isArray(data2)?data2[0]:data2); return;
+        }
+        setAuthMsg('⚠️ '+(data?.message||data?.hint||JSON.stringify(data)),'err'); return;
       }
       setAuthMsg('✅ تم إنشاء الحساب. جاري الدخول...','ok');
       const user = Array.isArray(data)?data[0]:data;
+      console.log('signup response keys:', Object.keys(user||{}));
       loginSuccess(user);
       return;
     }
-    // login
-    const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.%D8%B3%D8%B9%D8%B1%20%D8%A7%D9%84%D8%B5%D8%B1%D9%81&select=id,username,password_hash`,
+    // login — اجلب كل الأعمدة أولاً لمعرفة الهيكل
+    let res = await fetch(
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=*`,
       { headers: getSBHeaders() }
     );
-    const rows = await res.json();
-    if(!res.ok){ setAuthMsg('⚠️ خطأ في الاتصال','err'); return; }
+    let rows = await res.json();
+    if(!res.ok){
+      console.error('Login failed:', JSON.stringify(rows));
+      setAuthMsg('⚠️ خطأ في الاتصال: '+(rows?.message||JSON.stringify(rows)),'err');
+      return;
+    }
     if(!rows.length){ setAuthMsg('⚠️ اسم المستخدم غير موجود','err'); return; }
+    console.log('users row keys:', Object.keys(rows[0]||{}));
     const u = rows[0];
     if(u.password_hash !== pwdHash){ setAuthMsg('⚠️ كلمة المرور غير صحيحة','err'); return; }
     loginSuccess(u);
   }catch(e){
+    console.error('Auth error:', e);
     setAuthMsg('⚠️ خطأ: '+e.message,'err');
   }finally{
     btn.disabled=false;
@@ -409,11 +554,13 @@ async function submitAuth(){
 function loginSuccess(user){
   const remember = document.getElementById('auth-remember')?.checked;
   const ttl = remember ? 30*24*60*60*1000 : 12*60*60*1000; // 30ي أو 12س
-  AUTH = { id:user.id, username:user.username, expires_at: Date.now()+ttl };
-  const store = remember ? localStorage : sessionStorage;
-  // نظّف الثاني لتجنب الازدواجية
-  (remember?sessionStorage:localStorage).removeItem('sb_auth');
-  store.setItem('sb_auth', JSON.stringify(AUTH));
+  AUTH = {
+    id: user.id || user.username || user.user_name || 'user',
+    username: user.username || user.user_name || 'user',
+    expires_at: Date.now()+ttl
+  };
+  SafeStore.remove('sb_auth');
+  SafeStore.set('sb_auth', JSON.stringify(AUTH));
   setAuthMsg('✅ تم الدخول بنجاح','ok');
   setTimeout(showApp, 300);
 }
@@ -424,12 +571,12 @@ async function showHint(){
   setAuthMsg('⏳ جاري البحث عن التلميح...');
   try{
     const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.%D8%B3%D8%B9%D8%B1%20%D8%A7%D9%84%D8%B5%D8%B1%D9%81&select=hint`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=password_hint`,
       { headers: getSBHeaders() }
     );
     const rows = await res.json();
     if(!rows.length){ setAuthMsg('⚠️ اسم المستخدم غير موجود','err'); return; }
-    const hint = rows[0].hint;
+    const hint = rows[0].password_hint || rows[0].hint;
     if(!hint){ setAuthMsg('💡 لا يوجد تلميح محفوظ لهذا الحساب','err'); return; }
     setAuthMsg('💡 تلميح: <strong style="color:#f9a825">'+hint+'</strong>','ok');
   }catch(e){
@@ -437,11 +584,11 @@ async function showHint(){
   }
 }
 
-function logout(){
-  if(!confirm('هل تريد تسجيل الخروج؟'))return;
+async function logout(){
+  const confirmed = await showConfirm('هل تريد تسجيل الخروج من حسابك؟', {title:'تسجيل الخروج', icon:'↩️', yesText:'نعم، خروج', noText:'إلغاء'});
+  if(!confirmed)return;
   AUTH=null;
-  localStorage.removeItem('sb_auth');
-  sessionStorage.removeItem('sb_auth');
+  SafeStore.remove('sb_auth');
   location.reload();
 }
 
@@ -460,7 +607,7 @@ function requireAuth(){
     showApp();
     return true;
   }
-  if(AUTH){ localStorage.removeItem('sb_auth'); sessionStorage.removeItem('sb_auth'); AUTH=null; }
+  if(AUTH){ SafeStore.remove('sb_auth'); AUTH=null; }
   document.getElementById('auth-screen').style.display='';
   document.getElementById('app-container').style.display='none';
   return false;
@@ -502,7 +649,8 @@ async function purgeOldDeleted(){
 }
 
 async function softDeleteCloud(id){
-  if(!confirm('حذف هذه العملية؟ يمكن استعادتها خلال 30 يوماً من سلة المحذوفات.'))return;
+  const confirmed = await showConfirm('سيتم حذف العملية وإمكانية استعادتها خلال <strong>30 يوماً</strong> من سلة المحذوفات.', {title:'حذف العملية', icon:'🗑️', yesText:'نعم، احذف', noText:'إلغاء'});
+  if(!confirmed)return;
   try{
     const res=await fetch(
       SUPABASE_URL+'/rest/v1/sarf_history?id=eq.'+id,
@@ -527,7 +675,8 @@ async function restoreCloud(id){
 }
 
 async function hardDeleteCloud(id){
-  if(!confirm('حذف نهائي لا يمكن التراجع عنه. متابعة؟'))return;
+  const confirmed = await showConfirm('⚠️ هذا <strong>حذف نهائي</strong> لا يمكن التراجع عنه!', {title:'حذف نهائي', icon:'⛔', yesText:'نعم، احذف نهائياً', noText:'إلغاء'});
+  if(!confirmed)return;
   try{
     const res=await fetch(
       SUPABASE_URL+'/rest/v1/sarf_history?id=eq.'+id,
@@ -731,9 +880,13 @@ async function loadCloudHistory(){
   loop();
 })();
 
-function showConfirm(msg){
+function showConfirm(msg, {title='تأكيد العملية', icon='⚠️', yesText='نعم', noText='إلغاء'}={}){
   return new Promise(resolve=>{
     document.getElementById('modal-body').innerHTML=msg;
+    document.querySelector('.modal-title').textContent=title;
+    document.querySelector('.modal-icon').textContent=icon;
+    document.getElementById('modal-yes').textContent=yesText;
+    document.getElementById('modal-no').textContent=noText;
     const overlay=document.getElementById('modal-overlay');
     overlay.classList.add('show');
     const yes=document.getElementById('modal-yes');
@@ -772,7 +925,7 @@ const CURRENCIES = {
   MYR:{name:'رينغيت ماليزي',flag:'🇲🇾',rate:0.85,decimals:2},
   PHP:{name:'بيزو فلبيني',flag:'🇵🇭',rate:0.066,decimals:2},
   BDT:{name:'تاكا بنغلاديشية',flag:'🇧🇩',rate:0.034,decimals:2},
-  ETH:{name:'بر إثيوبي',flag:'🇪🇹',rate:0.029,decimals:2},
+  ETB:{name:'بر إثيوبي',flag:'🇪🇹',rate:0.029,decimals:2},
   NGN:{name:'نيرة نيجيرية',flag:'🇳🇬',rate:0.0023,decimals:2},
   CNY:{name:'يوان صيني',flag:'🇨🇳',rate:0.516,decimals:2},
   JPY:{name:'ين ياباني',flag:'🇯🇵',rate:0.025,decimals:0},
@@ -805,6 +958,9 @@ async function init(){
   renderTxs();
 }
 
+let LIVE_RATES = {};
+let LIVE_UPDATED_AT = 0;
+
 function onCurrencyChange(resetRate=true){
   const code=document.getElementById('currency').value;
   const c=CURRENCIES[code];
@@ -817,9 +973,6 @@ function onCurrencyChange(resetRate=true){
   document.getElementById('rate-hint').textContent=`1 ${code} = ${parseFloat(document.getElementById('rate').value).toLocaleString('en-US')} ر.س`;
   calc('sar');
 }
-
-let LIVE_RATES = {};
-let LIVE_UPDATED_AT = 0;
 
 async function fetchLiveRates(showToastMsg=false){
   const status=document.getElementById('live-status');
@@ -870,6 +1023,9 @@ async function saveSettings(){
   }catch(e){}
 }
 
+const ONES=['','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
+const TENS=['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
+
 function toArabicWords(num){
   try{
     const whole = Math.floor(Math.abs(num));
@@ -886,8 +1042,6 @@ function toArabicWords(num){
   return numToAr(num);
 }
 
-const ONES=['','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
-const TENS=['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
 function numToAr(n){
   n=Math.floor(n);
   if(n===0)return'صفر';
@@ -897,7 +1051,8 @@ function numToAr(n){
   if(n>=1000000){parts.push(numToAr(Math.floor(n/1000000))+' مليون');n%=1000000;}
   if(n>=1000){parts.push(numToAr(Math.floor(n/1000))+' ألف');n%=1000;}
   if(n>=100){
-    parts.push(ONES[Math.floor(n/100)]+' مئة');
+    const hundreds = Math.floor(n/100);
+    parts.push(hundreds===1 ? 'مئة' : hundreds===2 ? 'مئتان' : ONES[hundreds]+' مئة');
     n%=100;
   }
   if(n>=20){
@@ -1059,8 +1214,9 @@ function renderTxs(){
 }
 
 async function delTx(i){
-  if(!confirm('هل أنت متأكد من حذف هذه العملية؟'))return;
   const tx=txs[i];
+  const confirmed = await showConfirm(`هل أنت متأكد من حذف هذه العملية؟<br><br><strong>${tx.type}</strong> ${tx.flag||''} ${tx.currency}<br>المبلغ: <strong>${parseFloat(tx.sar).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong>`, {title:'حذف العملية', icon:'🗑️', yesText:'نعم، احذف', noText:'إلغاء'});
+  if(!confirmed)return;
   txs.splice(i,1);
   try{if(tx.id) await db.txs.delete(tx.id);}catch(e){}
   renderTxs();
@@ -1081,7 +1237,8 @@ function saveLog(){
 }
 
 async function clearLog(){
-  if(!confirm('حذف جميع السجلات؟'))return;
+  const confirmed = await showConfirm('سيتم حذف <strong>جميع السجلات المحلية</strong>.<br>هل أنت متأكد؟', {title:'مسح السجل', icon:'🗑️', yesText:'نعم، امسح الكل', noText:'إلغاء'});
+  if(!confirmed)return;
   txs=[];
   try{await db.txs.clear();}catch(e){}
   const rwEl=document.getElementById('result-words');
