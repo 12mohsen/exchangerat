@@ -690,6 +690,15 @@ async function submitAuth(){
   try{
     const pwdHash = await hashPwd(pass);
     if(authMode==='signup'){
+      // تحقق عالمي: الاسم يجب أن يكون غير موجود في أي تطبيق
+      const chk = await fetch(
+        SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=app_origin&limit=1`,
+        { headers: getSBHeaders() }
+      );
+      const chkRows = await chk.json();
+      if(chk.ok && Array.isArray(chkRows) && chkRows.length){
+        setAuthMsg('⚠️ اسم المستخدم موجود مسبقاً','err'); return;
+      }
       const res = await fetch(SUPABASE_URL+'/rest/v1/users', {
         method:'POST',
         headers:{ ...getSBHeaders(), 'Prefer':'return=representation' },
@@ -720,9 +729,9 @@ async function submitAuth(){
       loginSuccess(user);
       return;
     }
-    // login — اجلب كل الأعمدة أولاً لمعرفة الهيكل
+    // login — ابحث فقط ضمن مستخدمي هذا التطبيق (سعر الصرف)
     let res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=*`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.${encodeURIComponent('سعر الصرف')}&select=*`,
       { headers: getSBHeaders() }
     );
     let rows = await res.json();
@@ -731,7 +740,10 @@ async function submitAuth(){
       setAuthMsg('⚠️ خطأ في الاتصال: '+(rows?.message||JSON.stringify(rows)),'err');
       return;
     }
-    if(!rows.length){ setAuthMsg('⚠️ اسم المستخدم غير موجود','err'); return; }
+    if(!rows.length){
+      setAuthMsg('⚠️ اسم المستخدم غير مسجّل. سجّل حساباً أولاً.','err');
+      return;
+    }
     console.log('users row keys:', Object.keys(rows[0]||{}));
     const u = rows[0];
     if(u.password_hash !== pwdHash){ setAuthMsg('⚠️ كلمة المرور غير صحيحة','err'); return; }
@@ -780,11 +792,11 @@ async function showHint(){
   setAuthMsg('⏳ جاري البحث عن التلميح...');
   try{
     const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=password_hint`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.${encodeURIComponent('سعر الصرف')}&select=password_hint`,
       { headers: getSBHeaders() }
     );
     const rows = await res.json();
-    if(!rows.length){ setAuthMsg('⚠️ اسم المستخدم غير موجود','err'); return; }
+    if(!rows.length){ setAuthMsg('⚠️ اسم المستخدم غير مسجّل في تطبيق سعر الصرف','err'); return; }
     const hint = rows[0].password_hint || rows[0].hint;
     if(!hint){ setAuthMsg('💡 لا يوجد تلميح محفوظ لهذا الحساب','err'); return; }
     setAuthMsg('💡 تلميح: <strong style="color:#f9a825">'+hint+'</strong>','ok');
@@ -831,11 +843,11 @@ async function fetchResetHint(){
   resetMsg('');
   try{
     const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=password_hint`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.${encodeURIComponent('سعر الصرف')}&select=password_hint`,
       { headers: getSBHeaders() }
     );
     const rows = await res.json();
-    if(!rows.length){ resetMsg('⚠️ اسم المستخدم غير موجود'); return; }
+    if(!rows.length){ resetMsg('⚠️ اسم المستخدم غير مسجّل في تطبيق سعر الصرف'); return; }
     const hint = rows[0].password_hint || rows[0].hint || null;
     const hintBox = document.getElementById('reset-hint-box');
     hintBox.style.display='';
@@ -866,7 +878,7 @@ async function submitResetPassword(){
   try{
     const pwdHash = await hashPwd(newpass);
     const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(_resetUsername)}`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(_resetUsername)}&app_origin=eq.${encodeURIComponent('سعر الصرف')}`,
       { method:'PATCH', headers:{...getSBHeaders(),'Prefer':'return=minimal'}, body:JSON.stringify({password_hash:pwdHash}) }
     );
     if(!res.ok){ const t=await res.text(); resetMsg('⚠️ فشل التحديث: '+t,'2','err'); return; }
@@ -913,7 +925,7 @@ async function submitChangePassword(){
     const currentHash = await hashPwd(current);
     // تحقق من كلمة المرور الحالية
     const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=password_hash`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.${encodeURIComponent('سعر الصرف')}&select=password_hash`,
       { headers: getSBHeaders() }
     );
     const rows = await res.json();
@@ -922,7 +934,7 @@ async function submitChangePassword(){
     // تحديث كلمة المرور
     const newHash = await hashPwd(newpass);
     const upd = await fetch(
-      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}`,
+      SUPABASE_URL+`/rest/v1/users?username=eq.${encodeURIComponent(username)}&app_origin=eq.${encodeURIComponent('سعر الصرف')}`,
       { method:'PATCH', headers:{...getSBHeaders(),'Prefer':'return=minimal'}, body:JSON.stringify({password_hash:newHash}) }
     );
     if(!upd.ok){ const t=await upd.text(); setChpassMsg('⚠️ فشل التحديث: '+t,'err'); return; }
