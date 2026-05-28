@@ -189,7 +189,14 @@ window.Dexie = Dexie;
   .cloud-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888}
   .cloud-refresh{background:none;border:1px solid #2a2a3e;color:#4a9eff;border-radius:8px;padding:5px 12px;font-size:.75rem;cursor:pointer;transition:.2s}
   .cloud-refresh:hover{background:#1e1e2e;border-color:#4a9eff}
-  .cloud-table-wrap{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;overflow-x:auto;overflow-y:hidden}
+  .cloud-table-wrap{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;overflow-x:auto;overflow-y:auto;max-height:420px;scrollbar-width:thin;scrollbar-color:#4a9eff #13131f}
+  .cloud-table-wrap::-webkit-scrollbar{width:8px;height:8px}
+  .cloud-table-wrap::-webkit-scrollbar-track{background:#13131f;border-radius:8px}
+  .cloud-table-wrap::-webkit-scrollbar-thumb{background:linear-gradient(135deg,#4a9eff,#a78bfa);border-radius:8px;border:1px solid #1e1e2e}
+  .cloud-table-wrap::-webkit-scrollbar-thumb:hover{background:linear-gradient(135deg,#6ab0ff,#b89bff)}
+  .cloud-table-wrap::-webkit-scrollbar-corner{background:#13131f}
+  .cloud-table thead th{position:sticky;top:0;z-index:2}
+  .cloud-table tfoot td{position:sticky;bottom:0;z-index:2;background:#13131f}
   .cloud-table{width:100%;border-collapse:collapse;font-size:.78rem}
   .cloud-table th{background:#13131f;color:#888;font-weight:600;padding:10px 12px;text-align:right;border-bottom:1px solid #2a2a3e;letter-spacing:.5px}
   .cloud-table td{padding:10px 12px;border-bottom:1px solid #1a1a2e;color:#ccc;vertical-align:middle}
@@ -312,7 +319,7 @@ window.Dexie = Dexie;
     select option{background:#13131f;color:#fff;padding:12px;font-size:1.1rem;color-scheme:dark}
     .cloud-header{flex-direction:column;align-items:flex-start;gap:10px}
     .cloud-header>div{display:flex;flex-direction:column;gap:8px}
-    .cloud-table-wrap{overflow-x:auto;overflow-y:visible;min-height:auto}
+    .cloud-table-wrap{overflow-x:auto;overflow-y:auto;max-height:360px;min-height:auto;-webkit-overflow-scrolling:touch}
     .cloud-table{font-size:.7rem;min-width:600px}
     .cloud-table th{padding:8px 6px;white-space:nowrap}
     .cloud-table td{padding:8px 6px;white-space:nowrap}
