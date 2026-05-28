@@ -1004,40 +1004,22 @@ function requireAuth(){
 
 async function saveToSupabase(tx){
   try{
-    const payload = {
-      base_amount      : parseFloat(tx.sar),
-      converted_amount : parseFloat(tx.foreign),
-      exchange_rate    : parseFloat(tx.rate),
-      arabic_text      : tx.tafqeet || '',
-      target_currency  : tx.currency,
-      user_name        : AUTH?.username || null,
-      created_from     : APP_ORIGIN
-    };
-    let res = await fetch(SUPABASE_URL+'/rest/v1/exchangerat', {
+    const res = await fetch(SUPABASE_URL+'/rest/v1/exchangerat', {
       method:'POST',
       headers: SB_HEADERS,
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        base_amount      : parseFloat(tx.sar),
+        converted_amount : parseFloat(tx.foreign),
+        exchange_rate    : parseFloat(tx.rate),
+        arabic_text      : tx.tafqeet || '',
+        target_currency  : tx.currency,
+        user_name        : AUTH?.username || null
+      })
     });
-    // If created_from column doesn't exist, retry without it
-    if(!res.ok){
-      const errText = await res.text();
-      if(errText.includes('created_from')){
-        delete payload.created_from;
-        res = await fetch(SUPABASE_URL+'/rest/v1/exchangerat', {
-          method:'POST',
-          headers: SB_HEADERS,
-          body: JSON.stringify(payload)
-        });
-        const respText2 = await res.text();
-        console.log('Supabase insert (retry) status:', res.status, res.statusText, respText2);
-        if(!res.ok){ console.error('Supabase insert error:',respText2); }
-        else{ console.log('✅ Saved to Supabase (without created_from)'); }
-      } else {
-        console.error('Supabase insert error:',errText);
-      }
-    } else {
-      console.log('✅ Saved to Supabase with created_from');
-    }
+    const respText = await res.text();
+    console.log('Supabase insert status:', res.status, res.statusText, respText);
+    if(!res.ok){ console.error('Supabase insert error:',respText); }
+    else{ console.log('✅ Saved to Supabase'); }
   }catch(e){ console.error('saveToSupabase exception:',e); }
 }
 
@@ -1225,6 +1207,17 @@ async function loadCloudHistory(){
           <button class="trash-empty-all-btn" onclick="emptyTrash()">🗑 تفريغ السلة</button>
         </div>
       </div>` : '';
+    // === حساب الإجماليات (تتزامن تلقائياً مع البيانات الحالية) ===
+    const totalSAR = data.reduce((s,r)=>s+(parseFloat(r.base_amount)||0),0);
+    const byCurrency = {};
+    data.forEach(r=>{
+      const cur = r.target_currency || '—';
+      byCurrency[cur] = (byCurrency[cur]||0) + (parseFloat(r.converted_amount)||0);
+    });
+    const convertedTotalHTML = Object.entries(byCurrency).map(([cur,amt])=>{
+      const flag = (CURRENCIES[cur]||{}).flag || '';
+      return `<div style="display:flex;justify-content:space-between;gap:8px;line-height:1.55;white-space:nowrap"><span style="color:#888;font-size:.72rem">${flag} ${cur}</span><span style="color:#4a9eff;font-weight:700">${amt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>`;
+    }).join('');
     el.innerHTML= trashBanner + `<table class="cloud-table">
       <thead><tr>
         <th style="width:44px;text-align:center">
@@ -1240,6 +1233,14 @@ async function loadCloudHistory(){
         <th>${isTrash?'متبقي':''}</th>
         <th></th>
       </tr></thead>
+      <tfoot>
+        <tr style="background:linear-gradient(135deg,#13131f,#1a1a2e);border-top:2px solid #4a9eff">
+          <td colspan="2" style="padding:12px 10px;color:#a78bfa;font-weight:700;font-size:.82rem;text-align:right;white-space:nowrap">📊 الإجمالي</td>
+          <td style="padding:12px 10px;color:#fff;font-weight:700;font-size:.88rem;white-space:nowrap">${totalSAR.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} <span style="color:#666;font-size:.7rem;font-weight:400">ر.س</span></td>
+          <td style="padding:8px 10px;min-width:140px">${convertedTotalHTML || '<span style=\"color:#555\">—</span>'}</td>
+          <td colspan="5" style="padding:12px 10px;color:#555;font-size:.7rem;text-align:left">عدد العمليات: <strong style="color:#4caf50">${data.length}</strong></td>
+        </tr>
+      </tfoot>
       <tbody>${data.map(r=>{
         const cur=r.target_currency||'';
         const info=CURRENCIES[cur]||{};
