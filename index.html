@@ -387,16 +387,22 @@ window.Dexie = Dexie;
     <div class="auth-logo">🔑</div>
     <div class="auth-title">إعادة تعيين كلمة المرور</div>
 
-    <!-- الخطوة 1: إظهار التلميح -->
+    <!-- الخطوة 1: إثبات الهوية بالتلميح (يُكتب ولا يُكشف) -->
     <div class="reset-step active" id="reset-step1">
-      <div class="auth-sub">اكتب اسم المستخدم لرؤية التلميح</div>
+      <div class="auth-sub">اكتب اسم المستخدم والتلميح الذي سجّلته</div>
       <div class="auth-field">
         <label>اسم المستخدم</label>
         <input type="text" id="reset-user" placeholder="اسم المستخدم" autocomplete="username"
           oninput="resetMsg('')"
-          onkeydown="if(event.key==='Enter')fetchResetHint()">
+          onkeydown="if(event.key==='Enter')document.getElementById('reset-hint-input').focus()">
       </div>
-      <button class="auth-btn" onclick="fetchResetHint()" id="reset-hint-btn">🔍 اكشف التلميح</button>
+      <div class="auth-field">
+        <label>التلميح</label>
+        <input type="text" id="reset-hint-input" placeholder="التلميح الذي سجّلته" autocomplete="off"
+          oninput="resetMsg('')"
+          onkeydown="if(event.key==='Enter')startReset()">
+      </div>
+      <button class="auth-btn" onclick="startReset()" id="reset-hint-btn">متابعة ←</button>
       <div class="reset-hint-box" id="reset-hint-box" style="display:none"></div>
       <div class="auth-msg" id="reset-msg1"></div>
       <div style="text-align:center;margin-top:14px">
@@ -639,32 +645,85 @@ const SafeStore = {
   }
 };
 /*
-  ملاحظة أمنية:
-  - SUPABASE_KEY مفتاح anon عام، الحماية تأتي من RLS في Supabase.
-  - للحماية الأقوى: استخدم Supabase Edge Function للتحقق من كلمة المرور.
+  ملاحظة أمنية (بعد تأمين 2026-10):
+  - لا يلمس المتصفح أي جدول مباشرة. كل شيء عبر دوال security definer
+    في 01_auth_rpc.sql و 10_exchangerat_rpc.sql.
+  - الهوية تُستخرج في القاعدة من توكن الجلسة، ولا يُوثَق بأي user_name
+    يرسله المتصفح.
+  - SUPABASE_KEY مفتاح anon عام ولا يمنح وحده أي وصول بعد ملف الإقفال 11.
 */
 const APP_ORIGIN = 'exchangerat';
 const SUPABASE_URL = 'https://tvbuvwjkojhqcxhyehfs.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2YnV2d2prb2pocWN4aHllaGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3MDE4MTUsImV4cCI6MjA5MjI3NzgxNX0.egwryYwKu_Bicl_koaYXaKGBoxz42c6k4VkMD9aZSWQ';
 
-let AUTH = null;
-try{ AUTH = JSON.parse(SafeStore.get('sb_auth')||'null'); }catch(e){}
+let AUTH = null;             // { username } — للعرض فقط، لا تُستعمل للتخويل
+let SB_TOKEN = null;         // توكن الجلسة: هو وحده ما يثبت الهوية للقاعدة
+const TOKEN_KEY = 'xr_session_token';
+
+// «تذكّرني» ⇒ تخزين دائم. غير ذلك ⇒ تخزين الجلسة فقط (يزول بإغلاق التبويب).
+function setSessionToken(t, remember){
+  SB_TOKEN = t || null;
+  try{ localStorage.removeItem(TOKEN_KEY); }catch(e){}
+  try{ sessionStorage.removeItem(TOKEN_KEY); }catch(e){}
+  if(!t) return;
+  if(remember === false){
+    try{ sessionStorage.setItem(TOKEN_KEY, t); return; }catch(e){}
+  }
+  SafeStore.set(TOKEN_KEY, t);
+}
+function getSessionToken(){
+  if(!SB_TOKEN){
+    try{ SB_TOKEN = sessionStorage.getItem(TOKEN_KEY); }catch(e){}
+    if(!SB_TOKEN) SB_TOKEN = SafeStore.get(TOKEN_KEY);
+  }
+  return SB_TOKEN || '';
+}
 
 function getSBHeaders(){
-  const token = AUTH?.access_token || SUPABASE_KEY;
   return {
     'apikey': SUPABASE_KEY,
-    'Authorization': 'Bearer ' + token,
-    'Content-Type': 'application/json',
-    'Prefer': 'return=minimal'
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json'
   };
 }
-// Backwards-compat proxy (some code references SB_HEADERS directly)
-const SB_HEADERS = new Proxy({}, { get:(_,k)=>getSBHeaders()[k], ownKeys:()=>Object.keys(getSBHeaders()), getOwnPropertyDescriptor:(_,k)=>({enumerable:true,configurable:true,value:getSBHeaders()[k]}) });
+
+/** استدعاء دالة في القاعدة. يرفع Error برسالة القاعدة نفسها عند الفشل. */
+async function rpc(fn, args = {}){
+  const r = await fetch(SUPABASE_URL+'/rest/v1/rpc/'+fn, {
+    method:'POST', headers:getSBHeaders(), body:JSON.stringify(args)
+  });
+  const txt = await r.text();
+  let data = null;
+  try{ data = txt ? JSON.parse(txt) : null; }catch(e){ data = txt; }
+  if(!r.ok){
+    const msg = (data && (data.message || data.hint)) || txt || ('HTTP '+r.status);
+    if(/unauthorized|28000|permission denied|JWT/i.test(msg)){
+      setSessionToken(null); AUTH = null;
+    }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/** استدعاء يتطلب جلسة — يمرّر التوكن ولا يرسل أي اسم مستخدم. */
+function rpcAuth(fn, args = {}){
+  const token = getSessionToken();
+  if(!token) return Promise.reject(new Error('انتهت الجلسة — سجّل الدخول من جديد.'));
+  return rpc(fn, Object.assign({ p_token: token }, args));
+}
+
+/** عرض خطأ القاعدة كما هو أثناء التشغيل بدل رسالة عامة. */
+function dbErr(prefix, e){
+  console.error(prefix, e);
+  try{ showToast('⚠️ '+prefix+': '+(e?.message||e), 'warn'); }catch(_){}
+}
 
 // ================= AUTH (custom username+password table) =================
 let authMode='login';
 
+/** تجزئة SHA-256 بالملح القديم — لم تعد تُستعمل في المصادقة إطلاقاً
+ *  (bcrypt داخل القاعدة). مُبقاة لأي كود قديم قد يستدعيها، وتُحذف
+ *  بأمان متى تأكّد أن كل الحسابات رُقّيت إلى bcrypt. */
 async function hashPwd(pass){
   const buf = new TextEncoder().encode('sarf_salt_v1|'+pass);
   const hash = await crypto.subtle.digest('SHA-256', buf);
@@ -692,71 +751,37 @@ async function submitAuth(){
   const pass    =document.getElementById('auth-pass').value;
   const hint    =document.getElementById('auth-hint').value.trim();
   const btn     =document.getElementById('auth-submit');
+  const remember=document.getElementById('auth-remember')?.checked !== false;
   if(!username||!pass){ setAuthMsg('⚠️ أدخل البيانات كاملة','err'); return; }
   if(username.length<2){ setAuthMsg('⚠️ اسم المستخدم قصير جداً','err'); return; }
+  if(pass.length<4){ setAuthMsg('⚠️ كلمة المرور يجب أن تكون 4 أحرف على الأقل','err'); return; }
   btn.disabled=true; btn.textContent='⏳ جاري...';
   setAuthMsg('');
   try{
-    const pwdHash = await hashPwd(pass);
+    // كلمة المرور تُرسل خاماً للقاعدة فوق TLS، والقاعدة وحدها تهشّرها bcrypt.
+    // لم يعد المتصفح يقرأ pass_hash ولا يكتبه.
     if(authMode==='signup'){
-      // تحقق عالمي: الاسم يجب أن يكون غير موجود في أي تطبيق
-      const chk = await fetch(
-        SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(username)}&select=created_from&limit=1`,
-        { headers: getSBHeaders() }
-      );
-      const chkRows = await chk.json();
-      if(chk.ok && Array.isArray(chkRows) && chkRows.length){
-        setAuthMsg('⚠️ هذا الاسم محجوز في نظام تطبيقات أبو محسن الموحد','err'); return;
-      }
-      const res = await fetch(SUPABASE_URL+'/rest/v1/users', {
-        method:'POST',
-        headers:{ ...getSBHeaders(), 'Prefer':'return=representation' },
-        body: JSON.stringify({ user_id: username, pass_hash:pwdHash, password_hint:hint||null, created_from: APP_ORIGIN })
+      const res = await rpc('app_signup', {
+        p_user: username, p_pass: pass, p_hint: hint || '', p_origin: APP_ORIGIN
       });
-      const data = await res.json();
-      if(!res.ok){
-        console.error('Signup error full:', JSON.stringify(data));
-        if(data?.code==='23505'||data?.message?.includes('duplicate')){
-          setAuthMsg('⚠️ هذا الاسم محجوز في نظام تطبيقات أبو محسن الموحد','err'); return;
-        }
-        // عمود غير موجود - جرب بدون hint
-        if(data?.message?.includes('hint')){
-          const res2 = await fetch(SUPABASE_URL+'/rest/v1/users', {
-            method:'POST',
-            headers:{ ...getSBHeaders(), 'Prefer':'return=representation' },
-            body: JSON.stringify({ user_id: username, pass_hash:pwdHash, created_from: APP_ORIGIN })
-          });
-          const data2 = await res2.json();
-          if(!res2.ok){ setAuthMsg('⚠️ '+(data2?.message||'فشل إنشاء الحساب — تحقق من أعمدة جدول users'),'err'); return; }
-          loginSuccess(Array.isArray(data2)?data2[0]:data2); return;
-        }
-        setAuthMsg('⚠️ '+(data?.message||data?.hint||JSON.stringify(data)),'err'); return;
-      }
+      if(res?.taken){ setAuthMsg('⚠️ هذا الاسم محجوز في نظام تطبيقات أبو محسن الموحد','err'); return; }
+      if(!res?.ok){ setAuthMsg('⚠️ تعذّر إنشاء الحساب ('+(res?.error||'غير معروف')+')','err'); return; }
       setAuthMsg('✅ تم إنشاء الحساب. جاري الدخول...','ok');
-      const user = Array.isArray(data)?data[0]:data;
-      console.log('signup response keys:', Object.keys(user||{}));
-      loginSuccess(user);
+      loginSuccess(username, res.token, remember);
       return;
     }
-    // login — ابحث عن المستخدم في جدول users الموحد (بدون فلتر تطبيق)
-    let res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(username)}&select=*`,
-      { headers: getSBHeaders() }
-    );
-    let rows = await res.json();
-    if(!res.ok){
-      console.error('Login failed:', JSON.stringify(rows));
-      setAuthMsg('⚠️ خطأ في الاتصال: '+(rows?.message||JSON.stringify(rows)),'err');
-      return;
+    const res = await rpc('app_login', {
+      p_user: username, p_pass: pass, p_origin: APP_ORIGIN
+    });
+    if(res?.ok){ loginSuccess(username, res.token, remember); return; }
+    if(res?.locked){
+      setAuthMsg('⛔ أُقفل الحساب مؤقتاً بعد محاولات كثيرة. انتظر ١٥ دقيقة.','err'); return;
     }
-    if(!rows.length){
-      setAuthMsg('⚠️ اسم المستخدم غير مسجّل. سجّل حساباً أولاً.','err');
-      return;
+    if(res?.exists === false){
+      setAuthMsg('⚠️ اسم المستخدم غير مسجّل. سجّل حساباً أولاً.','err'); return;
     }
-    console.log('users row keys:', Object.keys(rows[0]||{}));
-    const u = rows[0];
-    if(u.pass_hash !== pwdHash){ setAuthMsg('⚠️ كلمة المرور غير صحيحة','err'); return; }
-    loginSuccess(u);
+    // لا يُفصح عن وجود الحساب من عدمه بعد هذه النقطة
+    setAuthMsg('⚠️ كلمة المرور غير صحيحة','err');
   }catch(e){
     console.error('Auth error:', e);
     setAuthMsg('⚠️ خطأ: '+e.message,'err');
@@ -779,20 +804,23 @@ function updateRememberVisual(){
 // تشغيل الوضع المرئي عند تحميل الصفحة
 document.addEventListener('DOMContentLoaded', updateRememberVisual);
 
-function loginSuccess(user){
-  const remember = document.getElementById('auth-remember')?.checked !== false;
-  AUTH = {
-    id: user.id || user.user_id || user.username || 'user',
-    username: user.user_id || user.username || 'user',
-    remember: remember,
-    // إذا تذكّرني: انتهاء بعد 10 سنوات، وإلا 8 ساعات
-    expires_at: remember ? (Date.now() + 10*365*24*60*60*1000) : (Date.now() + 8*60*60*1000)
-  };
-  SafeStore.set('sb_auth', JSON.stringify(AUTH));
-  // حفظ اسم المستخدم دائماً للإظهار في شاشة الدخول
-  SafeStore.set('sb_last_user', AUTH.username);
+function loginSuccess(username, token, remember){
+  setSessionToken(token, remember);
+  AUTH = { username: username };
+  SafeStore.set('sb_last_user', username);
+  // لم يعد يُخزَّن أي تاريخ انتهاء في المتصفح: صلاحية الجلسة تقرّرها
+  // القاعدة في app_sessions.expires_at، فلا يمكن تمديدها بتعديل التخزين.
+  SafeStore.remove('sb_auth');
   setAuthMsg('✅ تم الدخول بنجاح','ok');
+  clearAuthFields();
   setTimeout(showApp, 300);
+}
+
+/** تفريغ حقول الدخول — وإلا بقي ما كتبه المستخدم السابق ظاهراً. */
+function clearAuthFields(){
+  ['auth-pass','auth-hint','reset-newpass','reset-confirmpass',
+   'reset-hint-input','chpass-current','chpass-new','chpass-confirm']
+    .forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
 }
 
 async function showHint(){
@@ -800,15 +828,10 @@ async function showHint(){
   if(!username){ setAuthMsg('⚠️ اكتب اسم المستخدم أولاً ثم اضغط "نسيت"','err'); return; }
   setAuthMsg('⏳ جاري البحث عن التلميح...');
   try{
-    const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(username)}&select=password_hint`,
-      { headers: getSBHeaders() }
-    );
-    const rows = await res.json();
-    if(!rows.length){ setAuthMsg('⚠️ اسم المستخدم غير مسجّل','err'); return; }
-    const hint = rows[0].password_hint || rows[0].hint;
-    if(!hint){ setAuthMsg('💡 لا يوجد تلميح محفوظ لهذا الحساب','err'); return; }
-    setAuthMsg('💡 تلميح: <strong style="color:#f9a825">'+hint+'</strong>','ok');
+    const res = await rpc('app_get_hint', { p_user: username });
+    if(!res?.exists){ setAuthMsg('⚠️ اسم المستخدم غير مسجّل','err'); return; }
+    if(!res.hint){ setAuthMsg('💡 لا يوجد تلميح محفوظ لهذا الحساب','err'); return; }
+    setAuthMsg('💡 تلميح: <strong style="color:#f9a825">'+res.hint+'</strong>','ok');
   }catch(e){
     setAuthMsg('⚠️ خطأ: '+e.message,'err');
   }
@@ -816,22 +839,26 @@ async function showHint(){
 
 // ===== إعادة تعيين كلمة المرور =====
 let _resetUsername = '';
+let _resetHint = '';
 
 function openResetScreen(){
   const u = document.getElementById('auth-user').value.trim().toLowerCase();
   document.getElementById('reset-user').value = u;
+  document.getElementById('reset-hint-input').value = '';
   document.getElementById('reset-hint-box').style.display = 'none';
   document.getElementById('reset-hint-box').textContent = '';
   resetMsg('','1'); resetMsg('','2');
   document.getElementById('reset-newpass').value='';
   document.getElementById('reset-confirmpass').value='';
+  _resetUsername=''; _resetHint='';
   showResetStep(1);
   document.getElementById('reset-screen').classList.add('show');
 }
 
 function closeResetScreen(){
   document.getElementById('reset-screen').classList.remove('show');
-  _resetUsername='';
+  _resetUsername=''; _resetHint='';
+  clearAuthFields();
 }
 
 function showResetStep(n){
@@ -844,53 +871,48 @@ function resetMsg(msg, step='1', type=''){
   if(el){ el.innerHTML=msg; el.className='auth-msg '+(msg?(type||'err'):''); }
 }
 
-async function fetchResetHint(){
+/** الخطوة ١: لا تلمس القاعدة. التلميح يُتحقق منه في app_reset_with_hint
+ *  مع عدّاد المحاولات الفاشلة، فلا يُكشف هنا ولا يُقارَن في المتصفح. */
+function startReset(){
   const username = document.getElementById('reset-user').value.trim().toLowerCase();
+  const hint     = document.getElementById('reset-hint-input').value.trim();
   if(!username){ resetMsg('⚠️ اكتب اسم المستخدم أولاً'); return; }
-  const btn = document.getElementById('reset-hint-btn');
-  btn.disabled=true; btn.textContent='⏳ جاري...';
-  resetMsg('');
-  try{
-    const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(username)}&select=password_hint`,
-      { headers: getSBHeaders() }
-    );
-    const rows = await res.json();
-    if(!rows.length){ resetMsg('⚠️ اسم المستخدم غير مسجّل'); return; }
-    const hint = rows[0].password_hint || rows[0].hint || null;
-    const hintBox = document.getElementById('reset-hint-box');
-    hintBox.style.display='';
-    if(hint){
-      hintBox.innerHTML='💡 تلميح: <strong>'+hint+'</strong>';
-    } else {
-      hintBox.innerHTML='<span style="color:#888">لا يوجد تلميح محفوظ</span>';
-    }
-    _resetUsername = username;
-    document.getElementById('reset-sub2').textContent = 'كلمة مرور جديدة لـ: '+username;
-    // انتقل للخطوة 2 بعد لحظة
-    setTimeout(()=>showResetStep(2), 900);
-  }catch(e){
-    resetMsg('⚠️ خطأ: '+e.message);
-  }finally{
-    btn.disabled=false; btn.textContent='🔍 اكشف التلميح';
-  }
+  if(!hint){ resetMsg('⚠️ اكتب التلميح الذي سجّلته عند إنشاء الحساب'); return; }
+  _resetUsername = username;
+  _resetHint = hint;
+  resetMsg('','1');
+  document.getElementById('reset-sub2').textContent = 'كلمة مرور جديدة لـ: '+username;
+  showResetStep(2);
 }
 
 async function submitResetPassword(){
   const newpass   = document.getElementById('reset-newpass').value;
   const confirm   = document.getElementById('reset-confirmpass').value;
+  if(!_resetUsername){ resetMsg('⚠️ ابدأ من الخطوة الأولى','2','err'); showResetStep(1); return; }
   if(!newpass||newpass.length<4){ resetMsg('⚠️ كلمة المرور يجب أن تكون 4 أحرف على الأقل','2','err'); return; }
   if(newpass!==confirm){ resetMsg('⚠️ كلمتا المرور غير متطابقتين','2','err'); return; }
   const btn=document.getElementById('reset-save-btn');
   btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
   resetMsg('','2');
   try{
-    const pwdHash = await hashPwd(newpass);
-    const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(_resetUsername)}`,
-      { method:'PATCH', headers:{...getSBHeaders(),'Prefer':'return=minimal'}, body:JSON.stringify({pass_hash:pwdHash}) }
-    );
-    if(!res.ok){ const t=await res.text(); resetMsg('⚠️ فشل التحديث: '+t,'2','err'); return; }
+    const res = await rpc('app_reset_with_hint', {
+      p_user: _resetUsername, p_hint: _resetHint, p_newpass: newpass
+    });
+    if(!res?.ok){
+      const err = res?.error||'';
+      if(err==='hint_mismatch'){
+        resetMsg('⚠️ التلميح غير مطابق','2','err'); showResetStep(1); return;
+      }
+      if(err==='locked'){
+        resetMsg('⛔ أُقفل الحساب مؤقتاً بعد محاولات كثيرة. انتظر ١٥ دقيقة.','2','err'); return;
+      }
+      if(err==='user_not_found'){
+        resetMsg('⚠️ اسم المستخدم غير مسجّل','2','err'); showResetStep(1); return;
+      }
+      resetMsg('⚠️ تعذّر التغيير ('+(err||'غير معروف')+')','2','err'); return;
+    }
+    // القاعدة أبطلت كل الجلسات القديمة لهذا الحساب
+    setSessionToken(null); AUTH=null;
     resetMsg('✅ تم تغيير كلمة المرور بنجاح! سيتم توجيهك للدخول...','2','ok');
     setTimeout(()=>{ closeResetScreen(); }, 1800);
   }catch(e){
@@ -930,25 +952,17 @@ async function submitChangePassword(){
   btn.disabled=true; btn.textContent='⏳ جاري التحقق...';
   setChpassMsg('');
   try{
-    const username = AUTH?.username;
-    const currentHash = await hashPwd(current);
-    // تحقق من كلمة المرور الحالية
-    const res = await fetch(
-      SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(username)}&select=pass_hash`,
-      { headers: getSBHeaders() }
-    );
-    const rows = await res.json();
-    if(!rows.length){ setChpassMsg('⚠️ خطأ: المستخدم غير موجود','err'); return; }
-    if(rows[0].pass_hash !== currentHash){ setChpassMsg('⚠️ كلمة المرور الحالية غير صحيحة','err'); return; }
-    // تحديث كلمة المرور
-    const newHash = await hashPwd(newpass);
-    const upd = await fetch(
-      SUPABASE_URL+`/rest/v1/users?user_id=eq.${encodeURIComponent(username)}`,
-      { method:'PATCH', headers:{...getSBHeaders(),'Prefer':'return=minimal'}, body:JSON.stringify({pass_hash:newHash}) }
-    );
-    if(!upd.ok){ const t=await upd.text(); setChpassMsg('⚠️ فشل التحديث: '+t,'err'); return; }
+    // القاعدة تتحقق من الحالية وتبدّل الجديدة في عملية واحدة،
+    // ولم يعد المتصفح يقرأ pass_hash إطلاقاً
+    const res = await rpcAuth('app_change_password', { p_old: current, p_new: newpass });
+    if(!res?.ok){
+      const err = res?.error||'';
+      if(err==='wrong_old_password'){ setChpassMsg('⚠️ كلمة المرور الحالية غير صحيحة','err'); return; }
+      if(err==='unauthorized'){ setChpassMsg('⚠️ انتهت الجلسة — سجّل الدخول من جديد','err'); return; }
+      setChpassMsg('⚠️ تعذّر التغيير ('+(err||'غير معروف')+')','err'); return;
+    }
     setChpassMsg('✅ تم تغيير كلمة المرور بنجاح!','ok');
-    setTimeout(()=>closeChangePassword(), 1500);
+    setTimeout(()=>{ closeChangePassword(); clearAuthFields(); }, 1500);
   }catch(e){
     setChpassMsg('⚠️ خطأ: '+e.message,'err');
   }finally{
@@ -960,19 +974,25 @@ async function logout(){
   const confirmed = await showConfirm('هل تريد تسجيل الخروج من حسابك؟', {title:'تسجيل الخروج', icon:'↩️', yesText:'نعم، خروج', noText:'إلغاء'});
   if(!confirmed)return;
   const lastUser = AUTH?.username;
+  const token = getSessionToken();
+  // إبطال التوكن في القاعدة، لا في المتصفح وحده
+  if(token){ rpc('app_logout', { p_token: token }).catch(()=>{}); }
+  setSessionToken(null);
   AUTH=null;
   SafeStore.remove('sb_auth');
-  // أظهر شاشة الدخول مع اسم المستخدم
+  // تفريغ ما يخص الحساب السابق: الحقول والقوائم المعروضة
+  clearAuthFields();
+  try{ selectedCloudIds.clear(); }catch(e){}
+  const list = document.getElementById('cloud-list');
+  if(list) list.innerHTML='';
   document.getElementById('app-container').style.display='none';
   document.getElementById('auth-screen').style.display='';
   if(lastUser){
     const inp = document.getElementById('auth-user');
-    if(inp){ inp.value=lastUser; inp.focus(); }
-    // ضع المؤشر في حقل كلمة المرور
+    if(inp){ inp.value=lastUser; }
     setTimeout(()=>{ const p=document.getElementById('auth-pass'); if(p) p.focus(); },100);
   }
   setAuthMsg('');
-  // تأكد من إظهار تبويب الدخول
   switchAuthTab('login');
 }
 
@@ -986,61 +1006,55 @@ function showApp(){
   if(typeof init==='function'){ init(); loadCloudHistory(); fetchLiveRates(); }
 }
 
-function requireAuth(){
-  if(AUTH && AUTH.username && (AUTH.expires_at||0) > Date.now()){
-    // إذا كان تذكّرني مفعّلاً، جدّد الانتهاء تلقائياً
-    if(AUTH.remember){
-      AUTH.expires_at = Date.now() + 10*365*24*60*60*1000;
-      SafeStore.set('sb_auth', JSON.stringify(AUTH));
-    }
-    showApp();
-    return true;
-  }
-  if(AUTH){ SafeStore.remove('sb_auth'); AUTH=null; }
+function showLoginScreen(){
   document.getElementById('auth-screen').style.display='';
   document.getElementById('app-container').style.display='none';
-  // أظهر اسم المستخدم الأخير في حقل الإدخال
   const lastUser = SafeStore.get('sb_last_user');
-  if(lastUser){
-    const inp = document.getElementById('auth-user');
-    if(inp) inp.value = lastUser;
-  }
+  const inp = document.getElementById('auth-user');
+  if(inp && lastUser) inp.value = lastUser;
+}
+
+/** لم تعد صلاحية الجلسة تُقرأ من التخزين المحلي (كان بالإمكان تمديدها
+ *  بتحرير localStorage). القاعدة وحدها تقرّر: app_session_user. */
+async function requireAuth(){
+  const token = getSessionToken();
+  if(!token){ showLoginScreen(); return false; }
+  try{
+    const u = await rpc('app_session_user', { p_token: token });
+    if(u){
+      AUTH = { username: u };
+      SafeStore.set('sb_last_user', u);
+      showApp();
+      return true;
+    }
+  }catch(e){ console.error('session check failed:', e); }
+  setSessionToken(null); AUTH=null;
+  SafeStore.remove('sb_auth');
+  showLoginScreen();
   return false;
 }
+
 // ================= /AUTH =================
 
 async function saveToSupabase(tx){
+  // user_name لم يعد يُرسل: القاعدة تستخرجه من التوكن وتتجاهل أي قيمة هنا
   try{
-    const res = await fetch(SUPABASE_URL+'/rest/v1/exchangerat', {
-      method:'POST',
-      headers: SB_HEADERS,
-      body: JSON.stringify({
-        base_amount      : parseFloat(tx.sar),
-        converted_amount : parseFloat(tx.foreign),
-        exchange_rate    : parseFloat(tx.rate),
-        arabic_text      : tx.tafqeet || '',
-        target_currency  : tx.currency,
-        user_name        : AUTH?.username || null
-      })
-    });
-    const respText = await res.text();
-    console.log('Supabase insert status:', res.status, res.statusText, respText);
-    if(!res.ok){ console.error('Supabase insert error:',respText); }
-    else{ console.log('✅ Saved to Supabase'); }
-  }catch(e){ console.error('saveToSupabase exception:',e); }
+    await rpcAuth('xr_add', { p_item: {
+      base_amount      : parseFloat(tx.sar),
+      converted_amount : parseFloat(tx.foreign),
+      exchange_rate    : parseFloat(tx.rate),
+      arabic_text      : tx.tafqeet || '',
+      target_currency  : tx.currency
+    }});
+  }catch(e){ dbErr('تعذّر الحفظ في السحابة', e); }
 }
 
 let cloudView='active'; // 'active' or 'trash'
 
 async function purgeOldDeleted(){
-  try{
-    const cutoff=new Date(Date.now()-30*24*60*60*1000).toISOString();
-    const userF = AUTH?.username ? `&user_name=eq.${encodeURIComponent(AUTH.username)}` : '';
-    await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?deleted_at=lt.'+encodeURIComponent(cutoff)+userF,
-      {method:'DELETE', headers: SB_HEADERS}
-    );
-  }catch(e){}
+  // كان المتصفح يرسل تاريخ القطع، فكان بالإمكان تمرير تاريخ بعيد
+  // يمحو السلة كلها. صارت الـ٣٠ يوماً تُحسب في القاعدة.
+  try{ await rpcAuth('xr_purge_old'); }catch(e){ console.error('purge:', e); }
 }
 
 async function softDeleteCloud(id){
@@ -1060,26 +1074,20 @@ async function softDeleteCloud(id){
   );
   if(!confirmed)return;
   try{
-    const res=await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id,
-      {method:'PATCH', headers:SB_HEADERS, body:JSON.stringify({deleted_at:new Date().toISOString()})}
-    );
-    if(!res.ok){ const t=await res.text(); console.error('delete err:',t); showToast('⚠️ تعذّر الحذف','warn'); return; }
+    const r = await rpcAuth('xr_soft_delete', { p_ids: [String(id)] });
+    if(!r?.count){ showToast('⚠️ تعذّر الحذف — ليست من سجلاتك','warn'); return; }
     showInfoToast('🗑️ تم الحذف', 'محفوظة في المحذوفات لمدة 30 يوماً • اضغط على <b>🗑 المحذوفات</b> للاستعادة');
     loadCloudHistory();
-  }catch(e){ console.error(e); }
+  }catch(e){ dbErr('تعذّر الحذف', e); }
 }
 
 async function restoreCloud(id){
   try{
-    const res=await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id,
-      {method:'PATCH', headers:SB_HEADERS, body:JSON.stringify({deleted_at:null})}
-    );
-    if(!res.ok){ const t=await res.text(); console.error('restore err:',t); showToast('⚠️ تعذّر الاستعادة','warn'); return; }
+    const r = await rpcAuth('xr_restore', { p_ids: [String(id)] });
+    if(!r?.count){ showToast('⚠️ تعذّرت الاستعادة','warn'); return; }
     showToast('♻️ تمت الاستعادة بنجاح');
     loadCloudHistory();
-  }catch(e){ console.error(e); }
+  }catch(e){ dbErr('تعذّرت الاستعادة', e); }
 }
 
 async function restoreAllDeleted(){
@@ -1092,16 +1100,11 @@ async function restoreAllDeleted(){
     {title:'استعادة الكل', icon:'', yesText:'♻️ استعد الكل', noText:'إلغاء'}
   );
   if(!confirmed) return;
-  const userFilter = AUTH?.username ? `&user_name=eq.${encodeURIComponent(AUTH.username)}` : '';
   try{
-    const res = await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?deleted_at=not.is.null'+userFilter,
-      {method:'PATCH', headers:{...SB_HEADERS,'Prefer':'return=minimal'}, body:JSON.stringify({deleted_at:null})}
-    );
-    if(!res.ok){ showToast('⚠️ فشل في الاستعادة','warn'); return; }
-    showToast('✅ تمت استعادة جميع العمليات');
+    const r = await rpcAuth('xr_restore_all');
+    showToast('✅ تمت استعادة '+(r?.count||0)+' عملية');
     loadCloudHistory();
-  }catch(e){ console.error(e); }
+  }catch(e){ dbErr('فشل في الاستعادة', e); }
 }
 
 async function emptyTrash(){
@@ -1114,30 +1117,22 @@ async function emptyTrash(){
     {title:'تفريغ السلة', icon:'', yesText:'✖ تفريغ نهائي', noText:'إلغاء'}
   );
   if(!confirmed) return;
-  const userFilter = AUTH?.username ? `&user_name=eq.${encodeURIComponent(AUTH.username)}` : '';
   try{
-    const res = await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?deleted_at=not.is.null'+userFilter,
-      {method:'DELETE', headers:SB_HEADERS}
-    );
-    if(!res.ok){ showToast('⚠️ فشل التفريغ','warn'); return; }
-    showToast('🗑️ تم تفريغ السلة نهائياً');
+    const r = await rpcAuth('xr_empty_trash');
+    showToast('🗑️ تم تفريغ السلة نهائياً ('+(r?.count||0)+')');
     loadCloudHistory();
-  }catch(e){ console.error(e); }
+  }catch(e){ dbErr('فشل التفريغ', e); }
 }
 
 async function hardDeleteCloud(id){
   const confirmed = await showConfirm('⚠️ هذا <strong>حذف نهائي</strong> لا يمكن التراجع عنه!', {title:'حذف نهائي', icon:'⛔', yesText:'نعم، احذف نهائياً', noText:'إلغاء'});
   if(!confirmed)return;
   try{
-    const res=await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id,
-      {method:'DELETE', headers:SB_HEADERS}
-    );
-    if(!res.ok){ showToast('⚠️ تعذّر الحذف','warn'); return; }
+    const r = await rpcAuth('xr_hard_delete', { p_ids: [String(id)] });
+    if(!r?.count){ showToast('⚠️ تعذّر الحذف','warn'); return; }
     showToast('✅ حُذفت نهائياً');
     loadCloudHistory();
-  }catch(e){ console.error(e); }
+  }catch(e){ dbErr('تعذّر الحذف', e); }
 }
 
 function toggleTrashView(){
@@ -1173,19 +1168,9 @@ async function loadCloudHistory(){
   el.innerHTML='<div class="cloud-empty">جاري التحميل...</div>';
   purgeOldDeleted();
   const isTrash = cloudView==='trash';
-  const filter = isTrash ? 'deleted_at=not.is.null' : 'deleted_at=is.null';
-  const userFilter = AUTH?.username ? `&user_name=eq.${encodeURIComponent(AUTH.username)}` : '';
   try{
-    const res = await fetch(
-      SUPABASE_URL+'/rest/v1/exchangerat?select=*&'+filter+userFilter+'&order=created_at.desc&limit=20',
-      {headers: SB_HEADERS}
-    );
-    if(!res.ok){
-      const t=await res.text();
-      console.error('Supabase fetch error:',t);
-      throw new Error(t);
-    }
-    const data = await res.json();
+    // لا فلتر مستخدم من المتصفح: القاعدة لا تُرجع إلا صفوف صاحب التوكن
+    const data = await rpcAuth('xr_fetch', { p_trash: isTrash, p_limit: 20 }) || [];
     dot.className='cloud-dot ok';
     statusTxt.textContent='متصل • آخر تحديث: '+new Date().toLocaleTimeString('ar-SA');
     statusTxt.style.color='#4caf50';
@@ -1901,16 +1886,10 @@ async function bulkDeleteSelected(){
   );
   if(!confirmed) return;
   let done=0;
-  for(const id of selectedCloudIds){
-    try{
-      await fetch(SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id, {
-        method:'PATCH',
-        headers:{...SB_HEADERS,'Content-Type':'application/json'},
-        body:JSON.stringify({deleted_at:new Date().toISOString()})
-      });
-      done++;
-    }catch(e){}
-  }
+  try{
+    const r = await rpcAuth('xr_soft_delete', { p_ids: [...selectedCloudIds].map(String) });
+    done = r?.count || 0;
+  }catch(e){ dbErr('تعذّر الحذف', e); return; }
   selectedCloudIds.clear();
   showInfoToast('🗑️ تم الحذف', 'تم نقل '+done+' عملية إلى المحذوفات • محفوظة لمدة <strong style="color:#f9a825">30 يوماً</strong>');
   loadCloudHistory();
@@ -1921,16 +1900,10 @@ async function bulkRestoreSelected(){
   const confirmed = await showConfirm(`سيتم استعادة <strong>${selectedCloudIds.size}</strong> عملية.<br>هل أنت متأكد؟`,{title:'استعادة المحدد',icon:'♻️',yesText:'نعم، استعد',noText:'إلغاء'});
   if(!confirmed) return;
   let done=0;
-  for(const id of selectedCloudIds){
-    try{
-      await fetch(SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id, {
-        method:'PATCH',
-        headers:{...SB_HEADERS,'Content-Type':'application/json'},
-        body:JSON.stringify({deleted_at:null})
-      });
-      done++;
-    }catch(e){}
-  }
+  try{
+    const r = await rpcAuth('xr_restore', { p_ids: [...selectedCloudIds].map(String) });
+    done = r?.count || 0;
+  }catch(e){ dbErr('تعذّرت الاستعادة', e); return; }
   selectedCloudIds.clear();
   showToast('✅ تم استعادة '+done+' عملية');
   loadCloudHistory();
@@ -1941,15 +1914,10 @@ async function bulkHardDeleteSelected(){
   const confirmed = await showConfirm(`سيتم الحذف النهائي لـ <strong>${selectedCloudIds.size}</strong> عملية.<br>⚠️ لا يمكن التراجع عن هذا الإجراء!`,{title:'حذف نهائي',icon:'✖',yesText:'نعم، احذف نهائياً',noText:'إلغاء'});
   if(!confirmed) return;
   let done=0;
-  for(const id of selectedCloudIds){
-    try{
-      await fetch(SUPABASE_URL+'/rest/v1/exchangerat?id=eq.'+id, {
-        method:'DELETE',
-        headers:SB_HEADERS
-      });
-      done++;
-    }catch(e){}
-  }
+  try{
+    const r = await rpcAuth('xr_hard_delete', { p_ids: [...selectedCloudIds].map(String) });
+    done = r?.count || 0;
+  }catch(e){ dbErr('تعذّر الحذف النهائي', e); return; }
   selectedCloudIds.clear();
   showToast('✅ تم الحذف النهائي لـ '+done+' عملية');
   loadCloudHistory();
