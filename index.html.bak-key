@@ -1,0 +1,1955 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
+<style>input,textarea{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif!important}</style>
+<title>سعر الصرف</title>
+<script>
+// === Dexie Polyfill: يعمل بدون إنترنت باستخدام IndexedDB مباشرة أو ذاكرة ===
+class Dexie {
+  constructor(name){ this.name=name; this._vers=[]; this._stores={}; this._db=null; this._mem={}; this._ready=null; }
+  version(v){ const s={stores:(def)=>{Object.assign(this._stores,def);return s;}}; this._vers.push(v); return s; }
+  _open(){
+    if(this._ready) return this._ready;
+    this._ready = new Promise(resolve=>{
+      try{
+        const req=indexedDB.open(this.name,this._vers.length||1);
+        req.onupgradeneeded=e=>{
+          const db=e.target.result;
+          Object.entries(this._stores).forEach(([tbl,schema])=>{
+            if(!db.objectStoreNames.contains(tbl)){
+              const pk=schema.split(',')[0].replace('++','').trim();
+              db.createObjectStore(tbl,{keyPath:pk||'id',autoIncrement:schema.includes('++')});
+            }
+          });
+        };
+        req.onsuccess=e=>{this._db=e.target.result;resolve(true);};
+        req.onerror=()=>resolve(false);
+      }catch(e){resolve(false);}
+    });
+    return this._ready;
+  }
+  _tbl(name){
+    return {
+      orderBy:(k)=>({reverse:()=>({toArray:async()=>{
+        await this._open();
+        if(!this._db) return Object.values(this._mem[name]||{}).reverse();
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readonly');
+          const req=tx.objectStore(name).getAll();
+          req.onsuccess=()=>r((req.result||[]).reverse());
+          req.onerror=()=>r([]);
+        });
+      }})}),
+      get:async(k)=>{
+        await this._open();
+        if(!this._db) return (this._mem[name]||{})[k];
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readonly');
+          const req=tx.objectStore(name).get(k);
+          req.onsuccess=()=>r(req.result);
+          req.onerror=()=>r(null);
+        });
+      },
+      put:async(obj)=>{
+        await this._open();
+        if(!this._db){if(!this._mem[name])this._mem[name]={};const k=obj.id||obj.key||Date.now();this._mem[name][k]=obj;return k;}
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readwrite');
+          const req=tx.objectStore(name).put(obj);
+          req.onsuccess=()=>r(req.result);
+          req.onerror=()=>r(null);
+        });
+      },
+      add:async(obj)=>{
+        await this._open();
+        if(!this._db){if(!this._mem[name])this._mem[name]={};const k=Date.now();obj.id=k;this._mem[name][k]=obj;return k;}
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readwrite');
+          const req=tx.objectStore(name).add(obj);
+          req.onsuccess=()=>r(req.result);
+          req.onerror=()=>r(null);
+        });
+      },
+      delete:async(k)=>{
+        await this._open();
+        if(!this._db){delete(this._mem[name]||{})[k];return;}
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readwrite');
+          tx.objectStore(name).delete(k);
+          tx.oncomplete=r;
+        });
+      },
+      toArray:async()=>{
+        await this._open();
+        if(!this._db) return Object.values(this._mem[name]||{});
+        return new Promise(r=>{
+          const tx=this._db.transaction(name,'readonly');
+          const req=tx.objectStore(name).getAll();
+          req.onsuccess=()=>r(req.result||[]);
+          req.onerror=()=>r([]);
+        });
+      }
+    };
+  }
+  get txs(){ return this._tbl('txs'); }
+  get settings(){ return this._tbl('settings'); }
+}
+window.Dexie = Dexie;
+</script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif}
+  body{background:#050a18;min-height:100vh;padding:20px;direction:rtl;color:#fff;position:relative;overflow-x:hidden}
+  input,span,strong,.val,.tx-info{font-variant-numeric:lining-nums;unicode-bidi:plaintext}
+  #bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .container{max-width:660px;margin:0 auto;position:relative;z-index:1}
+  h1{text-align:center;font-size:1.6rem;margin-bottom:24px;background:linear-gradient(135deg,#4a9eff,#a78bfa);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .card{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;padding:20px;margin-bottom:16px}
+  .card-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:14px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .input-group{display:flex;flex-direction:column;gap:6px}
+  label{font-size:.82rem;color:#aaa;font-weight:600}
+  input,select{background:#13131f;border:1px solid #2a2a3e;border-radius:8px;padding:10px 12px;color:#fff;font-size:1rem;width:100%;transition:.2s;color-scheme:dark}
+  input:focus,select:focus{outline:none;border-color:#4a9eff;box-shadow:0 0 0 3px rgba(74,158,255,.15)}
+  select{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");background-repeat:no-repeat;background-position:left 10px center;background-size:12px;padding-right:12px;padding-left:32px;color-scheme:dark}
+  select option{background:#13131f;color:#fff;padding:8px 10px}
+  select option:hover{background:#1e1e2e}
+  select option:checked{background:#4a9eff;color:#fff}
+  /* إجبار القائمة المنسدلة على الوضع الداكن في الأجهزة الذكية */
+  @supports (-webkit-touch-callout: none){
+    select{color-scheme:dark;background-color:#13131f}
+  }
+
+  .amounts-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .amt-box{background:#13131f;border:1px solid #2a2a3e;border-radius:10px;padding:12px}
+  .amt-box label{font-size:.78rem;color:#888;margin-bottom:6px;display:block}
+  .amt-box input{border:none;background:transparent;padding:0;font-size:1.1rem;font-weight:700;color:#4a9eff}
+  .amt-box input:focus{box-shadow:none}
+  .amt-box .flag{font-size:1.2rem;margin-left:4px}
+
+  .prices-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .price-card{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:10px;padding:14px;text-align:center}
+  .price-card .lbl{font-size:.78rem;color:#888;margin-bottom:6px}
+  .price-card .val{font-size:1.35rem;font-weight:700;color:#4a9eff}
+  .arrow{margin-left:4px;font-size:.95rem}
+  .arrow-up{color:#4caf50}.arrow-down{color:#f44336}
+
+  .trade-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .btn{border:none;border-radius:10px;padding:13px;font-size:1rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:.2s;width:100%}
+  .btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .buy-btn{background:linear-gradient(135deg,#2e7d32,#4caf50);color:#fff}
+  .sell-btn{background:linear-gradient(135deg,#c62828,#f44336);color:#fff}
+  .log-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .save-btn{background:#1e3a5f;color:#4a9eff;border:1px solid #4a9eff}
+  .clear-btn{background:#3a1a1a;color:#f44336;border:1px solid #f44336}
+
+  .result-words{background:#1a2a1a;border:1px solid #2a4a2a;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:.95rem;color:#a0e0a0;line-height:1.7;display:none}
+  .result-words .rw-label{font-size:.75rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+  .result-words .rw-text{color:#4caf50;font-weight:700;font-size:1rem;direction:rtl}
+  .history{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;padding:16px;max-height:380px;overflow-y:auto}
+  .history::-webkit-scrollbar{width:4px}
+  .history::-webkit-scrollbar-thumb{background:#333;border-radius:4px}
+  .history-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:12px}
+  .tx{background:#13131f;border-radius:8px;padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .tx.buy{border-right:3px solid #4caf50}.tx.sell{border-right:3px solid #f44336}
+  .tx-info{flex:1;font-size:.82rem;color:#ccc;line-height:1.9}
+  .tx-info strong{color:#fff}
+  .type-buy{color:#4caf50;font-weight:700}.type-sell{color:#f44336;font-weight:700}
+  .del-btn{background:#3a1a1a;border:1px solid #f44336;color:#f44336;border-radius:6px;padding:4px 10px;font-size:.75rem;cursor:pointer;white-space:nowrap;transition:.2s}
+  .del-btn:hover{background:#f44336;color:#fff}
+  .empty{text-align:center;color:#555;font-size:.9rem;padding:20px}
+  .rate-hint{font-size:.75rem;color:#666;margin-top:4px}
+  .tx-tafqeet{color:#a78bfa;font-size:.8rem;font-style:italic;direction:rtl;margin-top:2px}
+  .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);background:#1e1e2e;border:1px solid #2a2a3e;border-radius:12px;padding:12px 24px;font-size:.92rem;color:#fff;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,.5)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.success{border-color:#4caf50;color:#4caf50}
+  .toast.warn{border-color:#f9a825;color:#f9a825}
+
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:10000;opacity:0;pointer-events:none;transition:opacity .25s}
+  .modal-overlay.show{opacity:1;pointer-events:all}
+  .modal-box{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:18px;padding:28px 24px;max-width:340px;width:90%;text-align:center;transform:scale(.92) translateY(16px);transition:transform .25s;box-shadow:0 8px 48px rgba(0,0,0,.6)}
+  .modal-overlay.show .modal-box{transform:scale(1) translateY(0)}
+  .modal-icon{font-size:2.4rem;margin-bottom:10px}
+  .modal-title{font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:8px}
+  .modal-body{font-size:.82rem;color:#aaa;line-height:1.7;margin-bottom:20px;direction:rtl}
+  .modal-body strong{color:#f9a825}
+  .modal-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .modal-btn{border:none;border-radius:10px;padding:11px;font-size:.95rem;font-weight:700;cursor:pointer;transition:.2s}
+  .modal-btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+  .modal-btn.yes{background:linear-gradient(135deg,#2e7d32,#4caf50);color:#fff}
+  .modal-btn.no{background:#2a2a3e;color:#aaa;border:1px solid #3a3a5e}
+
+  .cloud-section{margin-top:20px}
+  .cloud-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .cloud-title{font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:#888}
+  .cloud-refresh{background:none;border:1px solid #2a2a3e;color:#4a9eff;border-radius:8px;padding:5px 12px;font-size:.75rem;cursor:pointer;transition:.2s}
+  .cloud-refresh:hover{background:#1e1e2e;border-color:#4a9eff}
+  .cloud-table-wrap{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:14px;overflow-x:auto;overflow-y:auto;max-height:420px;scrollbar-width:thin;scrollbar-color:#4a9eff #13131f}
+  .cloud-table-wrap::-webkit-scrollbar{width:8px;height:8px}
+  .cloud-table-wrap::-webkit-scrollbar-track{background:#13131f;border-radius:8px}
+  .cloud-table-wrap::-webkit-scrollbar-thumb{background:linear-gradient(135deg,#4a9eff,#a78bfa);border-radius:8px;border:1px solid #1e1e2e}
+  .cloud-table-wrap::-webkit-scrollbar-thumb:hover{background:linear-gradient(135deg,#6ab0ff,#b89bff)}
+  .cloud-table-wrap::-webkit-scrollbar-corner{background:#13131f}
+  .cloud-table thead th{position:sticky;top:0;z-index:2}
+  .cloud-table tfoot td{position:sticky;bottom:0;z-index:2;background:#13131f}
+  .cloud-table{width:100%;border-collapse:collapse;font-size:.78rem}
+  .cloud-table th{background:#13131f;color:#888;font-weight:600;padding:10px 12px;text-align:right;border-bottom:1px solid #2a2a3e;letter-spacing:.5px}
+  .cloud-table td{padding:10px 12px;border-bottom:1px solid #1a1a2e;color:#ccc;vertical-align:middle}
+  .cloud-table tr:last-child td{border-bottom:none}
+  .cloud-table tr:hover td{background:#13131f}
+  .cloud-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:700}
+  .cloud-badge.buy{background:rgba(76,175,80,.15);color:#4caf50;border:1px solid rgba(76,175,80,.3)}
+  .cloud-badge.sell{background:rgba(244,67,54,.15);color:#f44336;border:1px solid rgba(244,67,54,.3)}
+  .cloud-empty{text-align:center;color:#555;font-size:.85rem;padding:24px}
+  .cloud-tafqeet{color:#a78bfa;font-size:.72rem;display:block;margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;line-height:1.55}
+  .cloud-table td.tafqeet-cell{white-space:normal;min-width:210px;max-width:320px}
+  .cloud-status{display:flex;align-items:center;gap:6px;font-size:.72rem;margin-bottom:8px}
+  .cloud-dot{width:7px;height:7px;border-radius:50%;background:#555}
+  .cloud-dot.ok{background:#4caf50;box-shadow:0 0 6px #4caf50}
+  .cloud-dot.err{background:#f44336}
+  .cloud-act{background:transparent;border:1px solid #2a2a3e;border-radius:6px;padding:3px 7px;font-size:.82rem;cursor:pointer;margin:0 2px;transition:.15s}
+  .cloud-act:hover{transform:translateY(-1px)}
+  .cloud-act.del{color:#f44336;border-color:rgba(244,67,54,.4)}
+  .cloud-act.del:hover{background:rgba(244,67,54,.15)}
+  .cloud-act.restore{color:#4caf50;border-color:rgba(76,175,80,.4)}
+  .cloud-act.restore:hover{background:rgba(76,175,80,.15)}
+
+  /* زر المحذوفات العصري */
+  .cloud-trash-toggle{display:flex;align-items:center;gap:5px;background:#1a1a2e;border:1px solid rgba(244,67,54,.35);color:#f87171;border-radius:8px;padding:5px 12px;font-size:.75rem;cursor:pointer;transition:.25s;font-weight:600;position:relative}
+  .cloud-trash-toggle:hover{background:rgba(244,67,54,.12);border-color:#f44336;color:#f44336;transform:translateY(-1px)}
+  .cloud-trash-toggle.active{background:linear-gradient(135deg,rgba(244,67,54,.2),rgba(200,30,30,.15));border-color:#f44336;color:#fff;box-shadow:0 0 12px rgba(244,67,54,.25)}
+
+  /* بنر سلة المحذوفات */
+  .trash-banner{background:linear-gradient(135deg,#1a0f0f,#120808);border:1px solid rgba(244,67,54,.3);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:relative;overflow:hidden}
+  .trash-banner::before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(244,67,54,.05),transparent);pointer-events:none}
+  .trash-banner-icon{font-size:2rem;flex-shrink:0;filter:drop-shadow(0 0 8px rgba(244,67,54,.4))}
+  .trash-banner-info{flex:1;min-width:140px}
+  .trash-banner-title{color:#fff;font-weight:700;font-size:.9rem;margin-bottom:3px}
+  .trash-banner-sub{color:#888;font-size:.72rem;line-height:1.5}
+  .trash-banner-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .trash-restore-all-btn{background:linear-gradient(135deg,#1a4a1f,#2e7d32);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.8rem;font-weight:700;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .trash-restore-all-btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+  .trash-empty-all-btn{background:transparent;color:#f44336;border:1px solid rgba(244,67,54,.4);border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:600;cursor:pointer;transition:.2s;white-space:nowrap}
+  .trash-empty-all-btn:hover{background:rgba(244,67,54,.12);border-color:#f44336}
+
+  /* صف الاستعادة في الجدول */
+  .restore-row-btn{background:linear-gradient(135deg,#1a4a1f,#2e7d32);color:#fff;border:none;border-radius:7px;padding:5px 10px;font-size:.75rem;font-weight:700;cursor:pointer;transition:.2s;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  .restore-row-btn:hover{filter:brightness(1.2);transform:translateY(-1px)}
+  .cloud-row-selected td{background:rgba(74,158,255,.08)!important}
+  .cloud-row-cb{width:18px;height:18px;accent-color:#4a9eff;cursor:pointer}
+  #cloud-select-btn.active{background:#1e3a5f;color:#4a9eff;border-color:#4a9eff}
+
+  .auth-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:99999;background:radial-gradient(ellipse at center,#0d1428 0%,#050a18 100%);padding:20px}
+  .auth-box{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:20px;padding:32px 28px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6);position:relative;overflow:hidden}
+  .auth-box::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:conic-gradient(from 0deg,transparent,rgba(74,158,255,.08),transparent 30%);animation:spin 8s linear infinite;z-index:0}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .auth-box>*{position:relative;z-index:1}
+  .auth-logo{text-align:center;font-size:2.4rem;margin-bottom:6px}
+  .auth-title{text-align:center;font-size:1.3rem;font-weight:800;background:linear-gradient(135deg,#4a9eff,#a78bfa);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}
+  .auth-sub{text-align:center;font-size:.82rem;color:#888;margin-bottom:22px}
+  .auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-bottom:18px;background:#13131f;border-radius:10px;padding:4px}
+  .auth-tab{padding:10px;text-align:center;font-size:.9rem;font-weight:700;color:#888;cursor:pointer;border-radius:8px;transition:.2s}
+  .auth-tab.active{background:linear-gradient(135deg,#4a9eff,#a78bfa);color:#fff}
+  .auth-field{margin-bottom:14px}
+  .auth-field label{display:block;font-size:.78rem;color:#aaa;margin-bottom:5px;font-weight:600}
+  .auth-field input{width:100%;background:#13131f;border:1px solid #2a2a3e;border-radius:9px;padding:11px 14px;color:#fff;font-size:.95rem;transition:.2s}
+  .auth-field input:focus{outline:none;border-color:#4a9eff;box-shadow:0 0 0 3px rgba(74,158,255,.15)}
+  .auth-btn{width:100%;padding:13px;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#4a9eff,#a78bfa);color:#fff;transition:.2s;margin-top:6px}
+  .auth-btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
+  .auth-btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+  .auth-msg{font-size:.82rem;text-align:center;margin-top:12px;min-height:18px}
+  .auth-msg.err{color:#f44336}
+  .auth-msg.ok{color:#4caf50}
+  .user-bar{display:flex;align-items:center;justify-content:space-between;background:#1e1e2e;border:1px solid #2a2a3e;border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.85rem}
+  .user-bar .user-info{color:#ccc;display:flex;align-items:center;gap:8px}
+  .user-bar .user-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#4a9eff,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:.9rem}
+  .logout-btn{background:transparent;border:1px solid #f44336;color:#f44336;border-radius:8px;padding:5px 12px;font-size:.78rem;cursor:pointer;transition:.2s}
+  .logout-btn:hover{background:#f44336;color:#fff}
+  .change-pass-btn{background:transparent;border:1px solid #a78bfa;color:#a78bfa;border-radius:8px;padding:5px 12px;font-size:.78rem;cursor:pointer;transition:.2s;margin-left:6px}
+  .change-pass-btn:hover{background:#a78bfa;color:#fff}
+
+  /* شاشة إعادة تعيين كلمة المرور */
+  .reset-screen{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:100001;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);padding:20px}
+  .reset-screen.show{display:flex!important}
+  .reset-box{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:20px;padding:32px 28px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6);position:relative;overflow:hidden}
+  .reset-box::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:conic-gradient(from 0deg,transparent,rgba(167,139,250,.08),transparent 30%);animation:spin 8s linear infinite;z-index:0}
+  .reset-box>*{position:relative;z-index:1}
+  .reset-step{display:none}.reset-step.active{display:block}
+  .reset-hint-box{background:#13131f;border:1px solid #f9a825;border-radius:10px;padding:14px 16px;margin:14px 0;font-size:.95rem;color:#f9a825;text-align:center;direction:rtl;min-height:44px}
+
+  /* مودال تغيير كلمة المرور من داخل التطبيق */
+  .chpass-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:10001;opacity:0;pointer-events:none;transition:opacity .25s}
+  .chpass-overlay.show{opacity:1;pointer-events:all}
+  .chpass-box{background:#1e1e2e;border:1px solid #2a2a3e;border-radius:18px;padding:28px 24px;max-width:360px;width:90%;transform:scale(.92) translateY(16px);transition:transform .25s}
+  .chpass-overlay.show .chpass-box{transform:scale(1) translateY(0)}
+  .chpass-title{font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:16px;text-align:center}
+  .chpass-field{margin-bottom:13px}
+  .chpass-field label{display:block;font-size:.78rem;color:#aaa;margin-bottom:5px;font-weight:600}
+  .chpass-field input{width:100%;background:#13131f;border:1px solid #2a2a3e;border-radius:9px;padding:11px 14px;color:#fff;font-size:.95rem;transition:.2s}
+  .chpass-field input:focus{outline:none;border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.15)}
+  .chpass-msg{font-size:.82rem;text-align:center;min-height:18px;margin-bottom:10px}
+  .chpass-msg.err{color:#f44336}.chpass-msg.ok{color:#4caf50}
+  .chpass-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
+  .chpass-btn{border:none;border-radius:10px;padding:11px;font-size:.95rem;font-weight:700;cursor:pointer;transition:.2s}
+  .chpass-btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+  .chpass-btn.save{background:linear-gradient(135deg,#6a35cc,#a78bfa);color:#fff}
+  .chpass-btn.cancel{background:#2a2a3e;color:#aaa;border:1px solid #3a3a5e}
+
+  /* Mobile Responsive */
+  @media (max-width: 480px){
+    body{padding:12px}
+    .container{max-width:100%}
+    h1{font-size:1.4rem;margin-bottom:18px}
+    .card{padding:16px;margin-bottom:12px;border-radius:12px}
+    .grid-2{grid-template-columns:1fr;gap:10px}
+    .grid-3{grid-template-columns:1fr;gap:10px}
+    .amounts-grid{grid-template-columns:1fr;gap:10px}
+    .prices-grid{grid-template-columns:1fr;gap:10px}
+    .trade-btns{grid-template-columns:1fr;gap:10px}
+    .log-btns{grid-template-columns:1fr;gap:10px}
+    .btn{padding:16px;font-size:1.1rem}
+    .auth-box{padding:24px 20px;max-width:100%}
+    .auth-field input{padding:14px 12px;font-size:1rem}
+    .auth-btn{padding:16px;font-size:1.1rem}
+    select{background:#13131f;color:#fff;font-size:1.1rem;padding:14px 12px;color-scheme:dark}
+    select option{background:#13131f;color:#fff;padding:12px;font-size:1.1rem;color-scheme:dark}
+    .cloud-header{flex-direction:column;align-items:flex-start;gap:10px}
+    .cloud-header>div{display:flex;flex-direction:column;gap:8px}
+    .cloud-table-wrap{overflow-x:auto;overflow-y:auto;max-height:360px;min-height:auto;-webkit-overflow-scrolling:touch}
+    .cloud-table{font-size:.7rem;min-width:600px}
+    .cloud-table th{padding:8px 6px;white-space:nowrap}
+    .cloud-table td{padding:8px 6px;white-space:nowrap}
+    .cloud-act{padding:6px 10px;font-size:1rem;min-width:36px;min-height:36px}
+    .cloud-tafqeet{max-width:none;overflow:visible;text-overflow:clip;white-space:normal;font-size:.68rem}
+    .cloud-table td.tafqeet-cell{white-space:normal;min-width:170px;max-width:200px}
+    .tx{flex-direction:column;gap:6px}
+    .tx-info{font-size:.8rem}
+    .del-btn{width:100%;padding:8px;margin-top:8px}
+    .user-bar{padding:8px 10px}
+    .logout-btn{padding:8px 16px;font-size:.85rem}
+  }
+  @media (max-width: 360px){
+    h1{font-size:1.2rem}
+    .cloud-table td.tafqeet-cell{min-width:150px;max-width:175px}
+    .card-title{font-size:.7rem}
+    .price-card .val{font-size:1.1rem}
+    .cloud-table{font-size:.65rem}
+    .cloud-table th{padding:6px 4px}
+    .cloud-table td{padding:6px 4px}
+  }
+</style>
+</head>
+<body>
+
+<div class="auth-screen" id="auth-screen">
+  <div class="auth-box">
+    <div class="auth-logo">💱</div>
+    <div class="auth-title">سعر الصرف</div>
+    <div class="auth-sub">سجّل دخولك للمتابعة</div>
+    <div class="auth-tabs">
+      <div class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">تسجيل الدخول</div>
+      <div class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')">حساب جديد</div>
+    </div>
+    <div id="auth-form">
+      <div class="auth-field">
+        <label>اسم المستخدم</label>
+        <input type="text" id="auth-user" autocomplete="username" required minlength="2" placeholder="مثال: خالد أو khalid" onkeydown="if(event.key==='Enter')submitAuth()">
+      </div>
+      <div class="auth-field">
+        <label>كلمة المرور</label>
+        <input type="password" id="auth-pass" autocomplete="current-password" required minlength="4" placeholder="••••••••" onkeydown="if(event.key==='Enter')submitAuth()">
+      </div>
+      <div class="auth-field" id="hint-field" style="display:none">
+        <label>تلميح لكلمة المرور <span style="color:#666;font-weight:400">(يساعدك إذا نسيتها)</span></label>
+        <input type="text" id="auth-hint" placeholder="مثال: اسم قطّتي">
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;font-size:.85rem;color:#bbb;cursor:pointer;margin:6px 0 10px;user-select:none;padding:8px 10px;background:#13131f;border-radius:8px;border:1px solid #2a2a3e" onclick="document.getElementById('auth-remember').click();event.stopPropagation()">
+        <span style="display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;border:2px solid #4a9eff;background:#13131f;flex-shrink:0;transition:.2s" id="remember-visual">
+          <svg id="remember-check" width="12" height="12" viewBox="0 0 12 12" style="display:none"><polyline points="1.5,6 5,9.5 10.5,2.5" stroke="#4a9eff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <input type="checkbox" id="auth-remember" checked style="position:absolute;opacity:0;width:0;height:0;pointer-events:none" onchange="updateRememberVisual()">
+        <span>تذكّرني — إبقاء الدخول بشكل دائم</span>
+      </label>
+      <button type="button" class="auth-btn" id="auth-submit" onclick="submitAuth()">دخول</button>
+      <div style="text-align:center;margin-top:10px">
+        <a href="#" id="forgot-link" onclick="event.preventDefault();openResetScreen();" style="color:#4a9eff;font-size:.82rem;text-decoration:none">نسيت كلمة المرور؟</a>
+      </div>
+      <div class="auth-msg" id="auth-msg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- شاشة إعادة تعيين كلمة المرور -->
+<div class="reset-screen" id="reset-screen">
+  <div class="reset-box">
+    <div class="auth-logo">🔑</div>
+    <div class="auth-title">إعادة تعيين كلمة المرور</div>
+
+    <!-- الخطوة 1: إظهار التلميح -->
+    <div class="reset-step active" id="reset-step1">
+      <div class="auth-sub">اكتب اسم المستخدم لرؤية التلميح</div>
+      <div class="auth-field">
+        <label>اسم المستخدم</label>
+        <input type="text" id="reset-user" placeholder="اسم المستخدم" autocomplete="username"
+          oninput="resetMsg('')"
+          onkeydown="if(event.key==='Enter')fetchResetHint()">
+      </div>
+      <button class="auth-btn" onclick="fetchResetHint()" id="reset-hint-btn">🔍 اكشف التلميح</button>
+      <div class="reset-hint-box" id="reset-hint-box" style="display:none"></div>
+      <div class="auth-msg" id="reset-msg1"></div>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" onclick="event.preventDefault();closeResetScreen()" style="color:#888;font-size:.82rem;text-decoration:none">← العودة لتسجيل الدخول</a>
+      </div>
+    </div>
+
+    <!-- الخطوة 2: إدخال كلمة مرور جديدة -->
+    <div class="reset-step" id="reset-step2">
+      <div class="auth-sub" id="reset-sub2">أدخل كلمة المرور الجديدة</div>
+      <div class="auth-field">
+        <label>كلمة المرور الجديدة</label>
+        <input type="password" id="reset-newpass" placeholder="••••••••" minlength="4" autocomplete="new-password"
+          onkeydown="if(event.key==='Enter')submitResetPassword()">
+      </div>
+      <div class="auth-field">
+        <label>تأكيد كلمة المرور</label>
+        <input type="password" id="reset-confirmpass" placeholder="••••••••" minlength="4" autocomplete="new-password"
+          onkeydown="if(event.key==='Enter')submitResetPassword()">
+      </div>
+      <button class="auth-btn" onclick="submitResetPassword()" id="reset-save-btn">✅ حفظ كلمة المرور</button>
+      <div class="auth-msg" id="reset-msg2"></div>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" onclick="event.preventDefault();closeResetScreen()" style="color:#888;font-size:.82rem;text-decoration:none">← العودة لتسجيل الدخول</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- مودال تغيير كلمة المرور من داخل التطبيق -->
+<div class="chpass-overlay" id="chpass-overlay">
+  <div class="chpass-box">
+    <div class="chpass-title">🔐 تغيير كلمة المرور</div>
+    <div class="chpass-field">
+      <label>كلمة المرور الحالية</label>
+      <input type="password" id="chpass-current" placeholder="••••••••" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter')submitChangePassword()">
+    </div>
+    <div class="chpass-field">
+      <label>كلمة المرور الجديدة</label>
+      <input type="password" id="chpass-new" placeholder="••••••••" minlength="4" autocomplete="new-password"
+        onkeydown="if(event.key==='Enter')submitChangePassword()">
+    </div>
+    <div class="chpass-field">
+      <label>تأكيد كلمة المرور الجديدة</label>
+      <input type="password" id="chpass-confirm" placeholder="••••••••" minlength="4" autocomplete="new-password"
+        onkeydown="if(event.key==='Enter')submitChangePassword()">
+    </div>
+    <div class="chpass-msg" id="chpass-msg"></div>
+    <div class="chpass-btns">
+      <button class="chpass-btn save" onclick="submitChangePassword()" id="chpass-save-btn">حفظ</button>
+      <button class="chpass-btn cancel" onclick="closeChangePassword()">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<div class="container" id="app-container" style="display:none">
+  <div class="user-bar">
+    <div class="user-info">
+      <div class="user-avatar" id="user-avatar">?</div>
+      <div><div style="color:#fff;font-weight:600" id="user-email">—</div><div style="color:#666;font-size:.7rem">مستخدم مُسجّل</div></div>
+    </div>
+    <button class="logout-btn" onclick="logout()">خروج ↩</button>
+    <button class="change-pass-btn" onclick="openChangePassword()">🔐 تغيير كلمة المرور</button>
+  </div>
+  <h1>💱 سعر الصرف</h1>
+
+  <div class="card">
+    <div class="card-title">إعدادات العملة</div>
+    <div class="grid-2">
+      <div class="input-group">
+        <label>العملة الأجنبية</label>
+        <select id="currency" onchange="onCurrencyChange()">
+          <option value="USD">🇺🇸 دولار أمريكي (USD)</option>
+          <option value="IDR">🇮🇩 روبية إندونيسية (IDR)</option>
+          <option value="EUR">🇪🇺 يورو (EUR)</option>
+          <option value="GBP">🇬🇧 جنيه إسترليني (GBP)</option>
+          <option value="AED">🇦🇪 درهم إماراتي (AED)</option>
+          <option value="KWD">🇰🇼 دينار كويتي (KWD)</option>
+          <option value="BHD">🇧🇭 دينار بحريني (BHD)</option>
+          <option value="QAR">🇶🇦 ريال قطري (QAR)</option>
+          <option value="OMR">🇴🇲 ريال عماني (OMR)</option>
+          <option value="JOD">🇯🇴 دينار أردني (JOD)</option>
+          <option value="EGP">🇪🇬 جنيه مصري (EGP)</option>
+          <option value="TRY">🇹🇷 ليرة تركية (TRY)</option>
+          <option value="INR">🇮🇳 روبية هندية (INR)</option>
+          <option value="PKR">🇵🇰 روبية باكستانية (PKR)</option>
+          <option value="MYR">🇲🇾 رينغيت ماليزي (MYR)</option>
+          <option value="PHP">🇵🇭 بيزو فلبيني (PHP)</option>
+          <option value="BDT">🇧🇩 تاكا بنغلاديشية (BDT)</option>
+          <option value="ETB">🇪🇹 بر إثيوبي (ETB)</option>
+          <option value="NGN">🇳🇬 نيرة نيجيرية (NGN)</option>
+          <option value="CNY">🇨🇳 يوان صيني (CNY)</option>
+          <option value="JPY">🇯🇵 ين ياباني (JPY)</option>
+          <option value="KRW">🇰🇷 وون كوري (KRW)</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label for="rate">سعر الصرف (ريال لكل وحدة)
+          <button type="button" onclick="fetchLiveRates(true)" id="live-btn" style="background:linear-gradient(135deg,#1e5f3a,#2e7d32);border:none;color:#fff;border-radius:6px;padding:2px 8px;font-size:.7rem;cursor:pointer;margin-right:6px">🟢 حي</button>
+        </label>
+        <input type="number" id="rate" step="0.0001" min="0" oninput="calc('rate')">
+        <div class="rate-hint" id="rate-hint"></div>
+        <div class="rate-hint" id="live-status" style="color:#4caf50"></div>
+      </div>
+    </div>
+
+    <div class="amounts-grid">
+      <div class="amt-box">
+        <label><span class="flag">🇸🇦</span> المبلغ بالريال السعودي</label>
+        <input type="number" id="sar" min="0" oninput="calc('sar')" placeholder="0.00">
+        <div id="sar-words" style="font-size:.85rem;color:#fff;margin-top:6px;min-height:16px;direction:rtl"></div>
+      </div>
+      <div class="amt-box">
+        <label><span class="flag" id="foreign-flag">🇺🇸</span> المبلغ بـ <span id="foreign-name">USD</span></label>
+        <input type="number" id="foreign" min="0" oninput="calc('foreign')" placeholder="0.00">
+        <div id="foreign-words" style="font-size:.85rem;color:#fff;margin-top:6px;min-height:16px;direction:rtl"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="input-group">
+        <label for="comm">العمولة (%)</label>
+        <input type="number" id="comm" value="0" step="0.1" min="0" oninput="calc('sar')" style="max-width:200px">
+      </div>
+    </div>
+  </div>
+
+  <div class="prices-grid">
+    <div class="price-card">
+      <div class="lbl">سعر الشراء</div>
+      <div class="val"><span id="buy-arrow" class="arrow">⟷</span><span id="buy-price">0.00</span></div>
+    </div>
+    <div class="price-card">
+      <div class="lbl">سعر البيع</div>
+      <div class="val"><span id="sell-arrow" class="arrow">⟷</span><span id="sell-price">0.00</span></div>
+    </div>
+  </div>
+
+  <div class="trade-btns">
+    <button class="btn buy-btn" onclick="trade('buy')">← شراء</button>
+    <button class="btn sell-btn" onclick="trade('sell')">بيع →</button>
+  </div>
+
+  <div class="result-words" id="result-words">
+    <div class="rw-label">التفقيط</div>
+    <div class="rw-text" id="result-words-text"></div>
+  </div>
+
+  <div class="log-btns">
+    <button class="btn save-btn" onclick="saveLog()">💾 حفظ السجل</button>
+    <button class="btn clear-btn" onclick="clearLog()">🗑️ حذف السجل</button>
+  </div>
+
+  <div class="history">
+    <div class="history-title">سجل العمليات</div>
+    <div id="tx-list"><div class="empty">لا توجد عمليات بعد</div></div>
+  </div>
+
+  <div class="cloud-section">
+    <div class="cloud-header">
+      <div>
+        <div class="cloud-title" id="cloud-section-title">☁️ تاريخ العمليات السحابية</div>
+        <div class="cloud-status"><span class="cloud-dot" id="cloud-dot"></span><span id="cloud-status-text" style="color:#555">جاري الاتصال...</span></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="cloud-refresh" onclick="loadCloudHistory()" id="cloud-refresh-btn">↻ تحديث</button>
+        <button class="cloud-trash-toggle" id="cloud-trash-btn" onclick="toggleTrashView()">
+          <span id="trash-btn-icon">🗑</span>
+          <span id="trash-btn-label">المحذوفات</span>
+          <span id="trash-badge" style="display:none;background:#f44336;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;font-weight:700;margin-right:2px"></span>
+        </button>
+        <button class="cloud-refresh" id="cloud-toggle-btn" onclick="toggleCloud()">🙈 إخفاء</button>
+      </div>
+    </div>
+    <!-- شريط الإجراءات الجماعية (يظهر عند التحديد) -->
+    <div id="cloud-bulk-bar" style="display:none;background:#1a1a2e;border:1px solid #4a9eff;border-radius:10px;padding:10px 14px;margin-bottom:10px;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <span id="cloud-selected-count" style="font-size:.82rem;color:#4a9eff;font-weight:700">0 محدد</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="cloud-bulk-actions">
+        <button onclick="bulkDeleteSelected()" id="bulk-delete-btn" style="background:linear-gradient(135deg,#c62828,#f44336);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.82rem;font-weight:700;cursor:pointer;transition:.2s">🗑️ حذف المحدد</button>
+        <button onclick="bulkRestoreSelected()" id="bulk-restore-btn" style="display:none;background:linear-gradient(135deg,#2e7d32,#4caf50);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.82rem;font-weight:700;cursor:pointer;transition:.2s">♻️ استعادة المحدد</button>
+        <button onclick="bulkHardDeleteSelected()" id="bulk-hard-delete-btn" style="display:none;background:linear-gradient(135deg,#6a1010,#c62828);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.82rem;font-weight:700;cursor:pointer;transition:.2s">✖ حذف نهائي</button>
+        <button onclick="toggleSelectMode(false)" style="background:#1e1e2e;color:#888;border:1px solid #2a2a3e;border-radius:8px;padding:8px 14px;font-size:.82rem;cursor:pointer">إلغاء</button>
+      </div>
+    </div>
+    <div class="cloud-table-wrap" id="cloud-table-wrap">
+      <div id="cloud-list"><div class="cloud-empty">جاري التحميل...</div></div>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:20px;padding:10px;color:#444;font-size:.8rem;letter-spacing:1px">
+    ملكية&nbsp; <span style="color:#a78bfa;font-weight:700">mohsen</span>
+  </div>
+</div>
+
+<canvas id="bg-canvas"></canvas>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-icon">⚠️</div>
+    <div class="modal-title">عملية مسجّلة مسبقاً</div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-btns">
+      <button class="modal-btn yes" id="modal-yes">نعم، احفظها</button>
+      <button class="modal-btn no" id="modal-no">لا، إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// === Safe Storage: يتجاوز حظر localStorage في Edge/file:// ===
+const SafeStore = {
+  _mem: {},
+  set(key, val) {
+    try { localStorage.setItem(key, val); return; } catch(e){}
+    try { sessionStorage.setItem(key, val); return; } catch(e){}
+    // fallback: cookie
+    try {
+      const expires = new Date(Date.now()+30*24*60*60*1000).toUTCString();
+      document.cookie = `${key}=${encodeURIComponent(val)};expires=${expires};path=/`;
+    } catch(e){}
+    this._mem[key] = val;
+  },
+  get(key) {
+    try { const v=localStorage.getItem(key); if(v!==null)return v; } catch(e){}
+    try { const v=sessionStorage.getItem(key); if(v!==null)return v; } catch(e){}
+    try {
+      const m = document.cookie.match('(^|;)\\s*'+key+'=([^;]+)');
+      if(m) return decodeURIComponent(m[2]);
+    } catch(e){}
+    return this._mem[key] || null;
+  },
+  remove(key) {
+    try { localStorage.removeItem(key); } catch(e){}
+    try { sessionStorage.removeItem(key); } catch(e){}
+    try { document.cookie = `${key}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`; } catch(e){}
+    delete this._mem[key];
+  }
+};
+/*
+  ملاحظة أمنية (بعد تأمين 2026-10):
+  - لا يلمس المتصفح أي جدول مباشرة. كل شيء عبر دوال security definer
+    في 01_auth_rpc.sql و 10_exchangerat_rpc.sql.
+  - الهوية تُستخرج في القاعدة من توكن الجلسة، ولا يُوثَق بأي user_name
+    يرسله المتصفح.
+  - SUPABASE_KEY مفتاح anon عام ولا يمنح وحده أي وصول بعد ملف الإقفال 11.
+*/
+const APP_ORIGIN = 'exchangerat';
+const SUPABASE_URL = 'https://tvbuvwjkojhqcxhyehfs.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2YnV2d2prb2pocWN4aHllaGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3MDE4MTUsImV4cCI6MjA5MjI3NzgxNX0.egwryYwKu_Bicl_koaYXaKGBoxz42c6k4VkMD9aZSWQ';
+
+let AUTH = null;             // { username } — للعرض فقط، لا تُستعمل للتخويل
+let SB_TOKEN = null;         // توكن الجلسة: هو وحده ما يثبت الهوية للقاعدة
+const TOKEN_KEY = 'xr_session_token';
+
+// «تذكّرني» ⇒ تخزين دائم. غير ذلك ⇒ تخزين الجلسة فقط (يزول بإغلاق التبويب).
+function setSessionToken(t, remember){
+  SB_TOKEN = t || null;
+  try{ localStorage.removeItem(TOKEN_KEY); }catch(e){}
+  try{ sessionStorage.removeItem(TOKEN_KEY); }catch(e){}
+  if(!t) return;
+  if(remember === false){
+    try{ sessionStorage.setItem(TOKEN_KEY, t); return; }catch(e){}
+  }
+  SafeStore.set(TOKEN_KEY, t);
+}
+function getSessionToken(){
+  if(!SB_TOKEN){
+    try{ SB_TOKEN = sessionStorage.getItem(TOKEN_KEY); }catch(e){}
+    if(!SB_TOKEN) SB_TOKEN = SafeStore.get(TOKEN_KEY);
+  }
+  return SB_TOKEN || '';
+}
+
+function getSBHeaders(){
+  return {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json'
+  };
+}
+
+/** استدعاء دالة في القاعدة. يرفع Error برسالة القاعدة نفسها عند الفشل. */
+async function rpc(fn, args = {}){
+  const r = await fetch(SUPABASE_URL+'/rest/v1/rpc/'+fn, {
+    method:'POST', headers:getSBHeaders(), body:JSON.stringify(args)
+  });
+  const txt = await r.text();
+  let data = null;
+  try{ data = txt ? JSON.parse(txt) : null; }catch(e){ data = txt; }
+  if(!r.ok){
+    const msg = (data && (data.message || data.hint)) || txt || ('HTTP '+r.status);
+    if(/unauthorized|28000|permission denied|JWT/i.test(msg)){
+      setSessionToken(null); AUTH = null;
+    }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/** استدعاء يتطلب جلسة — يمرّر التوكن ولا يرسل أي اسم مستخدم. */
+function rpcAuth(fn, args = {}){
+  const token = getSessionToken();
+  if(!token) return Promise.reject(new Error('انتهت الجلسة — سجّل الدخول من جديد.'));
+  return rpc(fn, Object.assign({ p_token: token }, args));
+}
+
+/** عرض خطأ القاعدة كما هو أثناء التشغيل بدل رسالة عامة. */
+function dbErr(prefix, e){
+  console.error(prefix, e);
+  try{ showToast('⚠️ '+prefix+': '+(e?.message||e), 'warn'); }catch(_){}
+}
+
+// ================= AUTH (custom username+password table) =================
+let authMode='login';
+
+/** تجزئة SHA-256 بالملح القديم — لم تعد تُستعمل في المصادقة إطلاقاً
+ *  (bcrypt داخل القاعدة). مُبقاة لأي كود قديم قد يستدعيها، وتُحذف
+ *  بأمان متى تأكّد أن كل الحسابات رُقّيت إلى bcrypt. */
+async function hashPwd(pass){
+  const buf = new TextEncoder().encode('sarf_salt_v1|'+pass);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function switchAuthTab(mode){
+  authMode=mode;
+  document.getElementById('tab-login').classList.toggle('active', mode==='login');
+  document.getElementById('tab-signup').classList.toggle('active', mode==='signup');
+  document.getElementById('auth-submit').textContent = mode==='login'?'دخول':'إنشاء الحساب';
+  document.getElementById('hint-field').style.display = mode==='signup' ? '' : 'none';
+  document.getElementById('forgot-link').style.display = mode==='login' ? '' : 'none';
+  document.getElementById('auth-pass').setAttribute('autocomplete', mode==='login'?'current-password':'new-password');
+  setAuthMsg('');
+}
+
+function setAuthMsg(msg, type=''){
+  const el=document.getElementById('auth-msg');
+  el.innerHTML=msg; el.className='auth-msg '+type;
+}
+
+async function submitAuth(){
+  const username=document.getElementById('auth-user').value.trim().toLowerCase();
+  const pass    =document.getElementById('auth-pass').value;
+  const hint    =document.getElementById('auth-hint').value.trim();
+  const btn     =document.getElementById('auth-submit');
+  const remember=document.getElementById('auth-remember')?.checked !== false;
+  if(!username||!pass){ setAuthMsg('⚠️ أدخل البيانات كاملة','err'); return; }
+  if(username.length<2){ setAuthMsg('⚠️ اسم المستخدم قصير جداً','err'); return; }
+  if(pass.length<4){ setAuthMsg('⚠️ كلمة المرور يجب أن تكون 4 أحرف على الأقل','err'); return; }
+  btn.disabled=true; btn.textContent='⏳ جاري...';
+  setAuthMsg('');
+  try{
+    // كلمة المرور تُرسل خاماً للقاعدة فوق TLS، والقاعدة وحدها تهشّرها bcrypt.
+    // لم يعد المتصفح يقرأ pass_hash ولا يكتبه.
+    if(authMode==='signup'){
+      const res = await rpc('app_signup', {
+        p_user: username, p_pass: pass, p_hint: hint || '', p_origin: APP_ORIGIN
+      });
+      if(res?.taken){ setAuthMsg('⚠️ هذا الاسم محجوز في نظام تطبيقات أبو محسن الموحد','err'); return; }
+      if(!res?.ok){ setAuthMsg('⚠️ تعذّر إنشاء الحساب ('+(res?.error||'غير معروف')+')','err'); return; }
+      setAuthMsg('✅ تم إنشاء الحساب. جاري الدخول...','ok');
+      loginSuccess(username, res.token, remember);
+      return;
+    }
+    const res = await rpc('app_login', {
+      p_user: username, p_pass: pass, p_origin: APP_ORIGIN
+    });
+    if(res?.ok){ loginSuccess(username, res.token, remember); return; }
+    if(res?.locked){
+      setAuthMsg('⛔ أُقفل الحساب مؤقتاً بعد محاولات كثيرة. انتظر ١٥ دقيقة.','err'); return;
+    }
+    if(res?.exists === false){
+      setAuthMsg('⚠️ اسم المستخدم غير مسجّل. سجّل حساباً أولاً.','err'); return;
+    }
+    // لا يُفصح عن وجود الحساب من عدمه بعد هذه النقطة
+    setAuthMsg('⚠️ كلمة المرور غير صحيحة','err');
+  }catch(e){
+    console.error('Auth error:', e);
+    setAuthMsg('⚠️ خطأ: '+e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent = authMode==='login'?'دخول':'إنشاء الحساب';
+  }
+}
+
+function updateRememberVisual(){
+  const cb = document.getElementById('auth-remember');
+  const svg = document.getElementById('remember-check');
+  const box = document.getElementById('remember-visual');
+  if(cb && svg && box){
+    svg.style.display = cb.checked ? '' : 'none';
+    box.style.background = cb.checked ? 'rgba(74,158,255,0.15)' : '#13131f';
+    box.style.borderColor = cb.checked ? '#4a9eff' : '#555';
+  }
+}
+// تشغيل الوضع المرئي عند تحميل الصفحة
+document.addEventListener('DOMContentLoaded', updateRememberVisual);
+
+function loginSuccess(username, token, remember){
+  setSessionToken(token, remember);
+  AUTH = { username: username };
+  SafeStore.set('sb_last_user', username);
+  // لم يعد يُخزَّن أي تاريخ انتهاء في المتصفح: صلاحية الجلسة تقرّرها
+  // القاعدة في app_sessions.expires_at، فلا يمكن تمديدها بتعديل التخزين.
+  SafeStore.remove('sb_auth');
+  setAuthMsg('✅ تم الدخول بنجاح','ok');
+  clearAuthFields();
+  setTimeout(showApp, 300);
+}
+
+/** تفريغ حقول الدخول — وإلا بقي ما كتبه المستخدم السابق ظاهراً. */
+function clearAuthFields(){
+  ['auth-pass','auth-hint','reset-newpass','reset-confirmpass',
+   'reset-hint-input','chpass-current','chpass-new','chpass-confirm']
+    .forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+}
+
+async function showHint(){
+  const username=document.getElementById('auth-user').value.trim().toLowerCase();
+  if(!username){ setAuthMsg('⚠️ اكتب اسم المستخدم أولاً ثم اضغط "نسيت"','err'); return; }
+  setAuthMsg('⏳ جاري البحث عن التلميح...');
+  try{
+    const res = await rpc('app_get_hint', { p_user: username });
+    if(!res?.exists){ setAuthMsg('⚠️ اسم المستخدم غير مسجّل','err'); return; }
+    if(!res.hint){ setAuthMsg('💡 لا يوجد تلميح محفوظ لهذا الحساب','err'); return; }
+    setAuthMsg('💡 تلميح: <strong style="color:#f9a825">'+res.hint+'</strong>','ok');
+  }catch(e){
+    setAuthMsg('⚠️ خطأ: '+e.message,'err');
+  }
+}
+
+// ===== إعادة تعيين كلمة المرور =====
+let _resetUsername = '';
+let _resetHint = '';
+
+function openResetScreen(){
+  const u = document.getElementById('auth-user').value.trim().toLowerCase();
+  document.getElementById('reset-user').value = u;
+  document.getElementById('reset-hint-box').style.display = 'none';
+  document.getElementById('reset-hint-box').textContent = '';
+  resetMsg('','1'); resetMsg('','2');
+  document.getElementById('reset-newpass').value='';
+  document.getElementById('reset-confirmpass').value='';
+  _resetUsername=''; _resetHint='';
+  showResetStep(1);
+  document.getElementById('reset-screen').classList.add('show');
+}
+
+function closeResetScreen(){
+  document.getElementById('reset-screen').classList.remove('show');
+  _resetUsername=''; _resetHint='';
+  clearAuthFields();
+}
+
+function showResetStep(n){
+  document.getElementById('reset-step1').classList.toggle('active', n===1);
+  document.getElementById('reset-step2').classList.toggle('active', n===2);
+}
+
+function resetMsg(msg, step='1', type=''){
+  const el=document.getElementById('reset-msg'+step);
+  if(el){ el.innerHTML=msg; el.className='auth-msg '+(msg?(type||'err'):''); }
+}
+
+/** الخطوة ١: يُكشف التلميح من app_get_hint ثم يُحتفظ به لتمريره
+ *  إلى app_reset_with_hint في الخطوة الثانية.
+ *  ⚠️ ملاحظة أمنية مقصودة: الكشف يجعل مطابقة التلميح في القاعدة
+ *     إجراءً شكلياً — من يعرف اسم حساب يستطيع كشف تلميحه ثم إعادة
+ *     تعيين كلمة مروره. (نفس سلوك رابط «نسيت كلمة المرور؟» في شاشة
+ *     الدخول، وهو موجود في التطبيقات الأربعة.) */
+async function fetchResetHint(){
+  const username = document.getElementById('reset-user').value.trim().toLowerCase();
+  if(!username){ resetMsg('⚠️ اكتب اسم المستخدم أولاً'); return; }
+  const btn = document.getElementById('reset-hint-btn');
+  btn.disabled=true; btn.textContent='⏳ جاري...';
+  resetMsg('');
+  try{
+    const res = await rpc('app_get_hint', { p_user: username });
+    if(!res?.exists){ resetMsg('⚠️ اسم المستخدم غير مسجّل'); return; }
+    const hint = res.hint || '';
+    const hintBox = document.getElementById('reset-hint-box');
+    hintBox.style.display='';
+    if(hint){
+      hintBox.innerHTML='💡 تلميح: <strong>'+hint+'</strong>';
+    } else {
+      hintBox.innerHTML='<span style="color:#888">لا يوجد تلميح محفوظ</span>';
+    }
+    _resetUsername = username;
+    _resetHint = hint;
+    document.getElementById('reset-sub2').textContent = 'كلمة مرور جديدة لـ: '+username;
+    setTimeout(()=>showResetStep(2), 900);
+  }catch(e){
+    resetMsg('⚠️ خطأ: '+e.message);
+  }finally{
+    btn.disabled=false; btn.textContent='🔍 اكشف التلميح';
+  }
+}
+
+async function submitResetPassword(){
+  const newpass   = document.getElementById('reset-newpass').value;
+  const confirm   = document.getElementById('reset-confirmpass').value;
+  if(!_resetUsername){ resetMsg('⚠️ ابدأ من الخطوة الأولى','2','err'); showResetStep(1); return; }
+  if(!newpass||newpass.length<4){ resetMsg('⚠️ كلمة المرور يجب أن تكون 4 أحرف على الأقل','2','err'); return; }
+  if(newpass!==confirm){ resetMsg('⚠️ كلمتا المرور غير متطابقتين','2','err'); return; }
+  const btn=document.getElementById('reset-save-btn');
+  btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
+  resetMsg('','2');
+  try{
+    const res = await rpc('app_reset_with_hint', {
+      p_user: _resetUsername, p_hint: _resetHint, p_newpass: newpass
+    });
+    if(!res?.ok){
+      const err = res?.error||'';
+      if(err==='hint_mismatch'){
+        // يقع هذا إن كان الحساب بلا تلميح محفوظ: القاعدة ترفض المطابقة الفارغة
+        resetMsg('⚠️ لا يوجد تلميح محفوظ لهذا الحساب — تعذّرت إعادة التعيين','2','err'); return;
+      }
+      if(err==='locked'){
+        resetMsg('⛔ أُقفل الحساب مؤقتاً بعد محاولات كثيرة. انتظر ١٥ دقيقة.','2','err'); return;
+      }
+      if(err==='user_not_found'){
+        resetMsg('⚠️ اسم المستخدم غير مسجّل','2','err'); showResetStep(1); return;
+      }
+      resetMsg('⚠️ تعذّر التغيير ('+(err||'غير معروف')+')','2','err'); return;
+    }
+    // القاعدة أبطلت كل الجلسات القديمة لهذا الحساب
+    setSessionToken(null); AUTH=null;
+    resetMsg('✅ تم تغيير كلمة المرور بنجاح! سيتم توجيهك للدخول...','2','ok');
+    setTimeout(()=>{ closeResetScreen(); }, 1800);
+  }catch(e){
+    resetMsg('⚠️ خطأ: '+e.message,'2','err');
+  }finally{
+    btn.disabled=false; btn.textContent='✅ حفظ كلمة المرور';
+  }
+}
+
+// ===== تغيير كلمة المرور من داخل التطبيق =====
+function openChangePassword(){
+  document.getElementById('chpass-current').value='';
+  document.getElementById('chpass-new').value='';
+  document.getElementById('chpass-confirm').value='';
+  setChpassMsg('');
+  document.getElementById('chpass-overlay').classList.add('show');
+  setTimeout(()=>document.getElementById('chpass-current').focus(),200);
+}
+
+function closeChangePassword(){
+  document.getElementById('chpass-overlay').classList.remove('show');
+}
+
+function setChpassMsg(msg,type=''){
+  const el=document.getElementById('chpass-msg');
+  el.innerHTML=msg; el.className='chpass-msg '+(msg?type:'');
+}
+
+async function submitChangePassword(){
+  const current = document.getElementById('chpass-current').value;
+  const newpass  = document.getElementById('chpass-new').value;
+  const confirm  = document.getElementById('chpass-confirm').value;
+  if(!current){ setChpassMsg('⚠️ أدخل كلمة المرور الحالية','err'); return; }
+  if(!newpass||newpass.length<4){ setChpassMsg('⚠️ كلمة المرور الجديدة يجب أن تكون 4 أحرف على الأقل','err'); return; }
+  if(newpass!==confirm){ setChpassMsg('⚠️ كلمتا المرور الجديدة غير متطابقتين','err'); return; }
+  const btn=document.getElementById('chpass-save-btn');
+  btn.disabled=true; btn.textContent='⏳ جاري التحقق...';
+  setChpassMsg('');
+  try{
+    // القاعدة تتحقق من الحالية وتبدّل الجديدة في عملية واحدة،
+    // ولم يعد المتصفح يقرأ pass_hash إطلاقاً
+    const res = await rpcAuth('app_change_password', { p_old: current, p_new: newpass });
+    if(!res?.ok){
+      const err = res?.error||'';
+      if(err==='wrong_old_password'){ setChpassMsg('⚠️ كلمة المرور الحالية غير صحيحة','err'); return; }
+      if(err==='unauthorized'){ setChpassMsg('⚠️ انتهت الجلسة — سجّل الدخول من جديد','err'); return; }
+      setChpassMsg('⚠️ تعذّر التغيير ('+(err||'غير معروف')+')','err'); return;
+    }
+    setChpassMsg('✅ تم تغيير كلمة المرور بنجاح!','ok');
+    setTimeout(()=>{ closeChangePassword(); clearAuthFields(); }, 1500);
+  }catch(e){
+    setChpassMsg('⚠️ خطأ: '+e.message,'err');
+  }finally{
+    btn.disabled=false; btn.textContent='حفظ';
+  }
+}
+
+async function logout(){
+  const confirmed = await showConfirm('هل تريد تسجيل الخروج من حسابك؟', {title:'تسجيل الخروج', icon:'↩️', yesText:'نعم، خروج', noText:'إلغاء'});
+  if(!confirmed)return;
+  const lastUser = AUTH?.username;
+  const token = getSessionToken();
+  // إبطال التوكن في القاعدة، لا في المتصفح وحده
+  if(token){ rpc('app_logout', { p_token: token }).catch(()=>{}); }
+  setSessionToken(null);
+  AUTH=null;
+  SafeStore.remove('sb_auth');
+  // تفريغ ما يخص الحساب السابق: الحقول والقوائم المعروضة
+  clearAuthFields();
+  try{ selectedCloudIds.clear(); }catch(e){}
+  const list = document.getElementById('cloud-list');
+  if(list) list.innerHTML='';
+  document.getElementById('app-container').style.display='none';
+  document.getElementById('auth-screen').style.display='';
+  if(lastUser){
+    const inp = document.getElementById('auth-user');
+    if(inp){ inp.value=lastUser; }
+    setTimeout(()=>{ const p=document.getElementById('auth-pass'); if(p) p.focus(); },100);
+  }
+  setAuthMsg('');
+  switchAuthTab('login');
+}
+
+function showApp(){
+  document.getElementById('auth-screen').style.display='none';
+  document.getElementById('app-container').style.display='';
+  if(AUTH?.username){
+    document.getElementById('user-email').textContent=AUTH.username;
+    document.getElementById('user-avatar').textContent=(AUTH.username[0]||'?').toUpperCase();
+  }
+  if(typeof init==='function'){ init(); loadCloudHistory(); fetchLiveRates(); }
+}
+
+function showLoginScreen(){
+  document.getElementById('auth-screen').style.display='';
+  document.getElementById('app-container').style.display='none';
+  const lastUser = SafeStore.get('sb_last_user');
+  const inp = document.getElementById('auth-user');
+  if(inp && lastUser) inp.value = lastUser;
+}
+
+/** لم تعد صلاحية الجلسة تُقرأ من التخزين المحلي (كان بالإمكان تمديدها
+ *  بتحرير localStorage). القاعدة وحدها تقرّر: app_session_user. */
+async function requireAuth(){
+  const token = getSessionToken();
+  if(!token){ showLoginScreen(); return false; }
+  try{
+    const u = await rpc('app_session_user', { p_token: token });
+    if(u){
+      AUTH = { username: u };
+      SafeStore.set('sb_last_user', u);
+      showApp();
+      return true;
+    }
+  }catch(e){ console.error('session check failed:', e); }
+  setSessionToken(null); AUTH=null;
+  SafeStore.remove('sb_auth');
+  showLoginScreen();
+  return false;
+}
+
+// ================= /AUTH =================
+
+async function saveToSupabase(tx){
+  // user_name لم يعد يُرسل: القاعدة تستخرجه من التوكن وتتجاهل أي قيمة هنا
+  try{
+    await rpcAuth('xr_add', { p_item: {
+      base_amount      : parseFloat(tx.sar),
+      converted_amount : parseFloat(tx.foreign),
+      exchange_rate    : parseFloat(tx.rate),
+      arabic_text      : tx.tafqeet || '',
+      target_currency  : tx.currency
+    }});
+  }catch(e){ dbErr('تعذّر الحفظ في السحابة', e); }
+}
+
+let cloudView='active'; // 'active' or 'trash'
+
+async function purgeOldDeleted(){
+  // كان المتصفح يرسل تاريخ القطع، فكان بالإمكان تمرير تاريخ بعيد
+  // يمحو السلة كلها. صارت الـ٣٠ يوماً تُحسب في القاعدة.
+  try{ await rpcAuth('xr_purge_old'); }catch(e){ console.error('purge:', e); }
+}
+
+async function softDeleteCloud(id){
+  const confirmed = await showConfirm(
+    `<div style="text-align:center">
+      <div style="font-size:2.5rem;margin-bottom:10px">🗑️</div>
+      <div style="color:#fff;font-size:.95rem;margin-bottom:14px">سيتم نقل العملية إلى سلة المحذوفات</div>
+      <div style="background:#1a2a3a;border:1px solid #2a4a6a;border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:1.4rem">♻️</span>
+        <div style="text-align:right">
+          <div style="color:#4a9eff;font-weight:700;font-size:.85rem">يمكنك استعادتها</div>
+          <div style="color:#aaa;font-size:.78rem;margin-top:2px">تُحفظ في المحذوفات لمدة <strong style="color:#f9a825">30 يوماً</strong> قبل الحذف النهائي</div>
+        </div>
+      </div>
+    </div>`,
+    {title:'حذف العملية', icon:'', yesText:'نعم، احذف', noText:'إلغاء'}
+  );
+  if(!confirmed)return;
+  try{
+    const r = await rpcAuth('xr_soft_delete', { p_ids: [String(id)] });
+    if(!r?.count){ showToast('⚠️ تعذّر الحذف — ليست من سجلاتك','warn'); return; }
+    showInfoToast('🗑️ تم الحذف', 'محفوظة في المحذوفات لمدة 30 يوماً • اضغط على <b>🗑 المحذوفات</b> للاستعادة');
+    loadCloudHistory();
+  }catch(e){ dbErr('تعذّر الحذف', e); }
+}
+
+async function restoreCloud(id){
+  try{
+    const r = await rpcAuth('xr_restore', { p_ids: [String(id)] });
+    if(!r?.count){ showToast('⚠️ تعذّرت الاستعادة','warn'); return; }
+    showToast('♻️ تمت الاستعادة بنجاح');
+    loadCloudHistory();
+  }catch(e){ dbErr('تعذّرت الاستعادة', e); }
+}
+
+async function restoreAllDeleted(){
+  const confirmed = await showConfirm(
+    `<div style="text-align:center">
+      <div style="font-size:2.2rem;margin-bottom:10px">♻️</div>
+      <div style="color:#fff;font-size:.92rem">سيتم استعادة <strong style="color:#4caf50">جميع العمليات المحذوفة</strong></div>
+      <div style="color:#888;font-size:.8rem;margin-top:8px">ستعود لقائمة العمليات السحابية</div>
+    </div>`,
+    {title:'استعادة الكل', icon:'', yesText:'♻️ استعد الكل', noText:'إلغاء'}
+  );
+  if(!confirmed) return;
+  try{
+    const r = await rpcAuth('xr_restore_all');
+    showToast('✅ تمت استعادة '+(r?.count||0)+' عملية');
+    loadCloudHistory();
+  }catch(e){ dbErr('فشل في الاستعادة', e); }
+}
+
+async function emptyTrash(){
+  const confirmed = await showConfirm(
+    `<div style="text-align:center">
+      <div style="font-size:2.2rem;margin-bottom:10px">⛔</div>
+      <div style="color:#fff;font-size:.92rem;margin-bottom:8px">سيتم <strong style="color:#f44336">الحذف النهائي</strong> لجميع العمليات في السلة</div>
+      <div style="color:#888;font-size:.78rem">لا يمكن التراجع عن هذا الإجراء!</div>
+    </div>`,
+    {title:'تفريغ السلة', icon:'', yesText:'✖ تفريغ نهائي', noText:'إلغاء'}
+  );
+  if(!confirmed) return;
+  try{
+    const r = await rpcAuth('xr_empty_trash');
+    showToast('🗑️ تم تفريغ السلة نهائياً ('+(r?.count||0)+')');
+    loadCloudHistory();
+  }catch(e){ dbErr('فشل التفريغ', e); }
+}
+
+async function hardDeleteCloud(id){
+  const confirmed = await showConfirm('⚠️ هذا <strong>حذف نهائي</strong> لا يمكن التراجع عنه!', {title:'حذف نهائي', icon:'⛔', yesText:'نعم، احذف نهائياً', noText:'إلغاء'});
+  if(!confirmed)return;
+  try{
+    const r = await rpcAuth('xr_hard_delete', { p_ids: [String(id)] });
+    if(!r?.count){ showToast('⚠️ تعذّر الحذف','warn'); return; }
+    showToast('✅ حُذفت نهائياً');
+    loadCloudHistory();
+  }catch(e){ dbErr('تعذّر الحذف', e); }
+}
+
+function toggleTrashView(){
+  cloudView = (cloudView==='active')?'trash':'active';
+  const isTrash = cloudView==='trash';
+  const btn = document.getElementById('cloud-trash-btn');
+  const icon = document.getElementById('trash-btn-icon');
+  const label = document.getElementById('trash-btn-label');
+  const title = document.getElementById('cloud-section-title');
+  const refreshBtn = document.getElementById('cloud-refresh-btn');
+  if(btn) btn.classList.toggle('active', isTrash);
+  if(icon) icon.textContent = isTrash ? '↩' : '🗑';
+  if(label) label.textContent = isTrash ? 'العودة للعمليات' : 'المحذوفات';
+  if(title) title.textContent = isTrash ? '🗑️ سلة المحذوفات' : '☁️ تاريخ العمليات السحابية';
+  if(refreshBtn) refreshBtn.style.display = isTrash ? 'none' : '';
+  if(cloudSelectMode){
+    const delBtn = document.getElementById('bulk-delete-btn');
+    const restoreBtn = document.getElementById('bulk-restore-btn');
+    const hardDelBtn = document.getElementById('bulk-hard-delete-btn');
+    if(delBtn) delBtn.style.display = isTrash ? 'none' : '';
+    if(restoreBtn) restoreBtn.style.display = isTrash ? '' : 'none';
+    if(hardDelBtn) hardDelBtn.style.display = isTrash ? '' : 'none';
+    selectedCloudIds.clear();
+    updateSelectedCount();
+  }
+  loadCloudHistory();
+}
+
+async function loadCloudHistory(){
+  const el=document.getElementById('cloud-list');
+  const dot=document.getElementById('cloud-dot');
+  const statusTxt=document.getElementById('cloud-status-text');
+  el.innerHTML='<div class="cloud-empty">جاري التحميل...</div>';
+  purgeOldDeleted();
+  const isTrash = cloudView==='trash';
+  try{
+    // لا فلتر مستخدم من المتصفح: القاعدة لا تُرجع إلا صفوف صاحب التوكن
+    const data = await rpcAuth('xr_fetch', { p_trash: isTrash, p_limit: 20 }) || [];
+    dot.className='cloud-dot ok';
+    statusTxt.textContent='متصل • آخر تحديث: '+new Date().toLocaleTimeString('ar-SA');
+    statusTxt.style.color='#4caf50';
+    if(!data||!data.length){
+      if(isTrash){
+        el.innerHTML=`
+          <div style="text-align:center;padding:40px 20px">
+            <div style="font-size:3.5rem;margin-bottom:12px;filter:grayscale(.3)">🗑️</div>
+            <div style="color:#555;font-size:.95rem;font-weight:600;margin-bottom:4px">سلة المحذوفات فارغة</div>
+            <div style="color:#444;font-size:.78rem">لا توجد عمليات محذوفة حالياً</div>
+          </div>`;
+      } else {
+        el.innerHTML='<div class="cloud-empty">لا توجد عمليات سحابية بعد</div>';
+      }
+      return;
+    }
+    const trashBanner = isTrash ? `
+      <div class="trash-banner">
+        <div class="trash-banner-icon">🗑️</div>
+        <div class="trash-banner-info">
+          <div class="trash-banner-title">سلة المحذوفات • ${data.length} عملية</div>
+          <div class="trash-banner-sub">تُحفظ تلقائياً لمدة <strong style="color:#f9a825">30 يومًا</strong> ثم تُحذف نهائياً</div>
+        </div>
+        <div class="trash-banner-actions">
+          <button class="trash-restore-all-btn" onclick="restoreAllDeleted()">♻️ استعادة الكل</button>
+          <button class="trash-empty-all-btn" onclick="emptyTrash()">🗑 تفريغ السلة</button>
+        </div>
+      </div>` : '';
+    // === حساب الإجماليات (تتزامن تلقائياً مع البيانات الحالية) ===
+    const totalSAR = data.reduce((s,r)=>s+(parseFloat(r.base_amount)||0),0);
+    const byCurrency = {};
+    data.forEach(r=>{
+      const cur = r.target_currency || '—';
+      byCurrency[cur] = (byCurrency[cur]||0) + (parseFloat(r.converted_amount)||0);
+    });
+    const convertedTotalHTML = Object.entries(byCurrency).map(([cur,amt])=>{
+      const flag = (CURRENCIES[cur]||{}).flag || '';
+      return `<div style="display:flex;justify-content:space-between;gap:8px;line-height:1.55;white-space:nowrap"><span style="color:#888;font-size:.72rem">${flag} ${cur}</span><span style="color:#4a9eff;font-weight:700">${amt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>`;
+    }).join('');
+    el.innerHTML= trashBanner + `<table class="cloud-table">
+      <thead><tr>
+        <th style="width:44px;text-align:center">
+          <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:.68rem;color:#4a9eff;white-space:nowrap">
+            <input type="checkbox" id="cloud-select-all" onchange="toggleSelectAllFromHeader(this)" style="width:15px;height:15px;accent-color:#4a9eff;cursor:pointer;margin:0">
+            <span>كل</span>
+          </label>
+        </th>
+        <th>العملة</th>
+        <th>المبلغ (ر.س)</th><th>المُحَوَّل</th>
+        <th>سعر الصرف</th><th>التفقيط</th>
+        <th>التاريخ</th>
+        <th>${isTrash?'متبقي':''}</th>
+        <th></th>
+      </tr></thead>
+      <tfoot>
+        <tr style="background:linear-gradient(135deg,#13131f,#1a1a2e);border-top:2px solid #4a9eff">
+          <td colspan="2" style="padding:12px 10px;color:#a78bfa;font-weight:700;font-size:.82rem;text-align:right;white-space:nowrap">📊 الإجمالي</td>
+          <td style="padding:12px 10px;color:#fff;font-weight:700;font-size:.88rem;white-space:nowrap">${totalSAR.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} <span style="color:#666;font-size:.7rem;font-weight:400">ر.س</span></td>
+          <td style="padding:8px 10px;min-width:140px">${convertedTotalHTML || '<span style=\"color:#555\">—</span>'}</td>
+          <td colspan="5" style="padding:12px 10px;color:#555;font-size:.7rem;text-align:left">عدد العمليات: <strong style="color:#4caf50">${data.length}</strong></td>
+        </tr>
+      </tfoot>
+      <tbody>${data.map(r=>{
+        const cur=r.target_currency||'';
+        const info=CURRENCIES[cur]||{};
+        const dateStr=r.created_at?new Date(r.created_at).toLocaleString('ar-SA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+        let remaining='';
+        if(isTrash && r.deleted_at){
+          const days=Math.max(0, 30 - Math.floor((Date.now()-new Date(r.deleted_at).getTime())/86400000));
+          remaining=`<span style="color:${days<7?'#f44336':'#f9a825'};font-weight:700">${days} يوم</span>`;
+        }
+        const cbCell = `<td style="text-align:center"><input type="checkbox" class="cloud-row-cb" data-id="${r.id}" ${selectedCloudIds.has(r.id)?'checked':''} onchange="toggleRowSelect(this)" onclick="event.stopPropagation()" style="width:16px;height:16px;accent-color:#4a9eff;cursor:pointer"></td>`;
+        const actions = isTrash
+          ? `<td style="white-space:nowrap">
+               <button class="restore-row-btn" onclick="event.stopPropagation();restoreCloud(${r.id})" title="استعادة">♻️ استعادة</button>
+               <button class="cloud-act del" onclick="event.stopPropagation();hardDeleteCloud(${r.id})" title="حذف نهائي" style="margin-top:3px">✖</button>
+             </td>`
+          : `<td style="white-space:nowrap"><button class="cloud-act del" onclick="event.stopPropagation();softDeleteCloud(${r.id})" title="حذف">🗑️</button></td>`;
+        const isSelected = selectedCloudIds.has(r.id);
+        return `<tr class="${isSelected?'cloud-row-selected':''}" style="cursor:pointer" onclick="const cb=this.querySelector('.cloud-row-cb');if(cb){cb.checked=!cb.checked;toggleRowSelect(cb)}">
+          ${cbCell}
+          <td>${info.flag||''} ${cur}</td>
+          <td>${parseFloat(r.base_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+          <td style="color:#4a9eff;font-weight:700">${parseFloat(r.converted_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+          <td style="color:#a78bfa">${parseFloat(r.exchange_rate||0)}</td>
+          <td class="tafqeet-cell"><span class="cloud-tafqeet">${r.arabic_text||'—'}</span></td>
+          <td style="color:#666;font-size:.7rem">${dateStr}</td>
+          <td style="font-size:.7rem">${remaining}</td>
+          ${actions}
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  }catch(e){
+    console.error('Supabase error:',e);
+    dot.className='cloud-dot err';
+    statusTxt.textContent='خطأ في الاتصال';
+    statusTxt.style.color='#f44336';
+    el.innerHTML=`<div class="cloud-empty">⚠️ خطأ: <span style="color:#f9a825;font-size:.75rem;direction:ltr;display:block;margin-top:4px">${e?.message||e?.code||JSON.stringify(e)}</span></div>`;
+  }
+}
+
+(function(){
+  const canvas=document.getElementById('bg-canvas');
+  const ctx=canvas.getContext('2d');
+  const SYMBOLS=['$','€','¥','£','₺','﷼','₹','₩','Fr'];
+  let W,H,particles,orbs,waves;
+
+  function resize(){
+    W=canvas.width=window.innerWidth;
+    H=canvas.height=window.innerHeight;
+  }
+
+  function rand(a,b){return Math.random()*(b-a)+a;}
+
+  function initParticles(){
+    particles=Array.from({length:28},()=>({
+      x:rand(0,W),y:rand(0,H),
+      vy:rand(-0.4,-0.15),vx:rand(-0.15,0.15),
+      sym:SYMBOLS[Math.floor(rand(0,SYMBOLS.length))],
+      size:rand(12,26),opacity:rand(0.04,0.13),
+      rot:rand(0,Math.PI*2),rotV:rand(-0.003,0.003)
+    }));
+  }
+
+  function initOrbs(){
+    orbs=[
+      {x:W*0.15,y:H*0.25,r:180,c:'rgba(30,80,180,0.18)'},
+      {x:W*0.85,y:H*0.6 ,r:220,c:'rgba(80,20,160,0.15)'},
+      {x:W*0.5 ,y:H*0.8 ,r:150,c:'rgba(0,120,200,0.12)'},
+      {x:W*0.7 ,y:H*0.15,r:130,c:'rgba(20,160,120,0.10)'},
+    ];
+  }
+
+  function initWaves(){
+    waves=[
+      {amp:38,freq:0.007,phase:0,   speed:0.006,y:H*0.35,color:'rgba(74,158,255,0.07)'},
+      {amp:28,freq:0.009,phase:1.5, speed:0.009,y:H*0.55,color:'rgba(167,139,250,0.06)'},
+      {amp:22,freq:0.011,phase:3.0, speed:0.007,y:H*0.72,color:'rgba(76,175,80,0.05)'},
+    ];
+  }
+
+  function drawOrbs(){
+    orbs.forEach(o=>{
+      const g=ctx.createRadialGradient(o.x,o.y,0,o.x,o.y,o.r);
+      g.addColorStop(0,o.c);
+      g.addColorStop(1,'transparent');
+      ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,Math.PI*2);
+      ctx.fillStyle=g;ctx.fill();
+    });
+  }
+
+  function drawWaves(){
+    waves.forEach(w=>{
+      w.phase+=w.speed;
+      ctx.beginPath();
+      ctx.moveTo(0,w.y);
+      for(let x=0;x<=W;x+=4){
+        ctx.lineTo(x, w.y+Math.sin(x*w.freq+w.phase)*w.amp);
+      }
+      ctx.strokeStyle=w.color;
+      ctx.lineWidth=1.5;
+      ctx.stroke();
+    });
+  }
+
+  function drawParticles(){
+    particles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.rot+=p.rotV;
+      if(p.y<-40) p.y=H+20;
+      if(p.x<-40) p.x=W+20;
+      if(p.x>W+40) p.x=-20;
+      ctx.save();
+      ctx.translate(p.x,p.y);
+      ctx.rotate(p.rot);
+      ctx.globalAlpha=p.opacity;
+      ctx.font=`bold ${p.size}px serif`;
+      ctx.fillStyle='#a0c8ff';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.fillText(p.sym,0,0);
+      ctx.restore();
+    });
+    ctx.globalAlpha=1;
+  }
+
+  function drawGrid(){
+    ctx.strokeStyle='rgba(74,158,255,0.03)';
+    ctx.lineWidth=1;
+    for(let x=0;x<W;x+=60){
+      ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+    }
+    for(let y=0;y<H;y+=60){
+      ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+    }
+  }
+
+  function loop(){
+    ctx.clearRect(0,0,W,H);
+    const bg=ctx.createLinearGradient(0,0,W,H);
+    bg.addColorStop(0,'#050a18');
+    bg.addColorStop(0.5,'#080d20');
+    bg.addColorStop(1,'#06091a');
+    ctx.fillStyle=bg;
+    ctx.fillRect(0,0,W,H);
+    drawGrid();
+    drawOrbs();
+    drawWaves();
+    drawParticles();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('resize',()=>{resize();initOrbs();initWaves();});
+  resize();initParticles();initOrbs();initWaves();
+  loop();
+})();
+
+function showConfirm(msg, {title='تأكيد العملية', icon='⚠️', yesText='نعم', noText='إلغاء'}={}){
+  return new Promise(resolve=>{
+    document.getElementById('modal-body').innerHTML=msg;
+    document.querySelector('.modal-title').textContent=title;
+    document.querySelector('.modal-icon').textContent=icon;
+    document.getElementById('modal-yes').textContent=yesText;
+    document.getElementById('modal-no').textContent=noText;
+    const overlay=document.getElementById('modal-overlay');
+    overlay.classList.add('show');
+    const yes=document.getElementById('modal-yes');
+    const no=document.getElementById('modal-no');
+    function close(val){overlay.classList.remove('show');yes.onclick=null;no.onclick=null;resolve(val);}
+    yes.onclick=()=>close(true);
+    no.onclick=()=>close(false);
+  });
+}
+
+function showInfoToast(title, body, duration=5000){
+  let t = document.getElementById('info-toast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'info-toast';
+    t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:#1a2a3a;border:1px solid #4a9eff;border-radius:14px;padding:14px 18px;min-width:280px;max-width:360px;z-index:9999;opacity:0;transition:all .35s;pointer-events:none;direction:rtl;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+    document.body.appendChild(t);
+  }
+  t.innerHTML = `<div style="display:flex;align-items:flex-start;gap:12px">
+    <span style="font-size:1.5rem;line-height:1">${title.split(' ')[0]}</span>
+    <div>
+      <div style="color:#4a9eff;font-weight:700;font-size:.88rem;margin-bottom:4px">${title.replace(/^\S+\s*/,'')}</div>
+      <div style="color:#bbb;font-size:.78rem;line-height:1.5">${body}</div>
+    </div>
+  </div>`;
+  requestAnimationFrame(()=>{ t.style.opacity='1'; t.style.transform='translateX(-50%) translateY(0)'; });
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(10px)'; }, duration);
+}
+
+function showInfoToast(title, body, duration=5000){
+  let t = document.getElementById('info-toast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'info-toast';
+    t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:#1a2a3a;border:1px solid #4a9eff;border-radius:14px;padding:14px 18px;min-width:280px;max-width:360px;z-index:9999;opacity:0;transition:all .35s;pointer-events:none;direction:rtl;box-shadow:0 8px 32px rgba(0,0,0,.5)';
+    document.body.appendChild(t);
+  }
+  const icon = title.split(' ')[0];
+  const titleText = title.replace(/^\S+\s*/, '');
+  t.innerHTML = '<div style="display:flex;align-items:flex-start;gap:12px"><span style="font-size:1.5rem;line-height:1">' + icon + '</span><div><div style="color:#4a9eff;font-weight:700;font-size:.88rem;margin-bottom:4px">' + titleText + '</div><div style="color:#bbb;font-size:.78rem;line-height:1.5">' + body + '</div></div></div>';
+  requestAnimationFrame(function(){ t.style.opacity='1'; t.style.transform='translateX(-50%) translateY(0)'; });
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function(){ t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(10px)'; }, duration);
+}
+
+function showToast(msg, type='success', duration=2500){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='toast '+type;
+  void t.offsetWidth;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer=setTimeout(()=>t.classList.remove('show'),duration);
+}
+
+const CURRENCIES = {
+  USD:{name:'دولار أمريكي',flag:'🇺🇸',rate:3.75,decimals:2},
+  IDR:{name:'روبية إندونيسية',flag:'🇮🇩',rate:0.00023,decimals:0},
+  EUR:{name:'يورو',flag:'🇪🇺',rate:4.10,decimals:2},
+  GBP:{name:'جنيه إسترليني',flag:'🇬🇧',rate:4.80,decimals:2},
+  AED:{name:'درهم إماراتي',flag:'🇦🇪',rate:1.02,decimals:2},
+  KWD:{name:'دينار كويتي',flag:'🇰🇼',rate:12.20,decimals:3},
+  BHD:{name:'دينار بحريني',flag:'🇧🇭',rate:9.95,decimals:3},
+  QAR:{name:'ريال قطري',flag:'🇶🇦',rate:1.03,decimals:2},
+  OMR:{name:'ريال عماني',flag:'🇴🇲',rate:9.74,decimals:3},
+  JOD:{name:'دينار أردني',flag:'🇯🇴',rate:5.29,decimals:3},
+  EGP:{name:'جنيه مصري',flag:'🇪🇬',rate:0.076,decimals:2},
+  TRY:{name:'ليرة تركية',flag:'🇹🇷',rate:0.11,decimals:2},
+  INR:{name:'روبية هندية',flag:'🇮🇳',rate:0.045,decimals:2},
+  PKR:{name:'روبية باكستانية',flag:'🇵🇰',rate:0.013,decimals:2},
+  MYR:{name:'رينغيت ماليزي',flag:'🇲🇾',rate:0.85,decimals:2},
+  PHP:{name:'بيزو فلبيني',flag:'🇵🇭',rate:0.066,decimals:2},
+  BDT:{name:'تاكا بنغلاديشية',flag:'🇧🇩',rate:0.034,decimals:2},
+  ETB:{name:'بر إثيوبي',flag:'🇪🇹',rate:0.029,decimals:2},
+  NGN:{name:'نيرة نيجيرية',flag:'🇳🇬',rate:0.0023,decimals:2},
+  CNY:{name:'يوان صيني',flag:'🇨🇳',rate:0.516,decimals:2},
+  JPY:{name:'ين ياباني',flag:'🇯🇵',rate:0.025,decimals:0},
+  KRW:{name:'وون كوري',flag:'🇰🇷',rate:0.0027,decimals:0},
+};
+
+let prevBuy=0,prevSell=0,txs=[];
+
+const db = new Dexie('SarfDB');
+db.version(1).stores({ txs: '++id,date,type,currency' });
+db.version(2).stores({ settings: 'key,value', txs: '++id,date,type,currency' });
+
+async function init(){
+  try{
+    const rows = await db.txs.orderBy('id').reverse().toArray();
+    txs = rows;
+  }catch(e){txs=[];}
+  try{
+    const s = await db.settings.get('main');
+    if(s && s.value){
+      const d = JSON.parse(s.value);
+      document.getElementById('currency').value=d.currency||'USD';
+      document.getElementById('rate').value=d.rate||3.75;
+      document.getElementById('comm').value=d.comm||0;
+      document.getElementById('sar').value=d.sar||'';
+      document.getElementById('foreign').value=d.foreign||'';
+    }
+  }catch(e){}
+  onCurrencyChange(false);
+  renderTxs();
+}
+
+let LIVE_RATES = {};
+let LIVE_UPDATED_AT = 0;
+
+function onCurrencyChange(resetRate=true){
+  const code=document.getElementById('currency').value;
+  const c=CURRENCIES[code];
+  if(resetRate){
+    const live = LIVE_RATES[code] || c.rate;
+    const rateDecimals = live >= 1 ? 4 : live >= 0.01 ? 6 : live >= 0.0001 ? 8 : 10;
+    document.getElementById('rate').value = parseFloat(live.toFixed(rateDecimals));
+  }
+  document.getElementById('foreign-flag').textContent=c.flag;
+  document.getElementById('foreign-name').textContent=code;
+  document.getElementById('rate-hint').textContent=`1 ${code} = ${parseFloat(document.getElementById('rate').value).toLocaleString('en-US')} ر.س`;
+  calc('sar');
+}
+
+async function fetchLiveRates(showToastMsg=false){
+  const status=document.getElementById('live-status');
+  const btn=document.getElementById('live-btn');
+  if(status) status.textContent='⏳ جاري جلب الأسعار العالمية...';
+  if(btn) btn.style.opacity='.6';
+  try{
+    const res = await fetch('https://open.er-api.com/v6/latest/SAR');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const j = await res.json();
+    if(j.result!=='success' || !j.rates) throw new Error('bad response');
+    // j.rates.USD = USD per 1 SAR  =>  SAR per 1 USD = 1/rate
+    LIVE_RATES = {};
+    for(const code in CURRENCIES){
+      if(j.rates[code]){
+        LIVE_RATES[code] = 1 / j.rates[code];
+        CURRENCIES[code].rate = LIVE_RATES[code];
+      }
+    }
+    LIVE_UPDATED_AT = Date.now();
+    const t = new Date(j.time_last_update_unix*1000).toLocaleString('ar-SA',{hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'});
+    if(status) status.textContent='🟢 أسعار حية • آخر تحديث من السوق: '+t;
+    // update current rate input
+    const code = document.getElementById('currency').value;
+    if(LIVE_RATES[code]){
+      const rateVal = LIVE_RATES[code];
+      const rateDecimals = rateVal >= 1 ? 4 : rateVal >= 0.01 ? 6 : rateVal >= 0.0001 ? 8 : 10;
+      document.getElementById('rate').value = parseFloat(rateVal.toFixed(rateDecimals));
+      calc('rate');
+    }
+    if(showToastMsg) showToast('✅ تم تحديث الأسعار من السوق العالمي');
+  }catch(e){
+    console.error('live rates err:',e);
+    if(status){ status.textContent='⚠️ تعذّر جلب الأسعار الحية'; status.style.color='#f9a825'; }
+    if(showToastMsg) showToast('⚠️ تعذّر جلب الأسعار','warn');
+  }finally{
+    if(btn) btn.style.opacity='1';
+  }
+}
+
+async function saveSettings(){
+  try{
+    await db.settings.put({key:'main',value:JSON.stringify({
+      currency:document.getElementById('currency').value,
+      rate:document.getElementById('rate').value,
+      comm:document.getElementById('comm').value,
+      sar:document.getElementById('sar').value,
+      foreign:document.getElementById('foreign').value,
+    })});
+  }catch(e){}
+}
+
+const ONES=['','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
+const TENS=['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
+
+function toArabicWords(num){
+  try{
+    const whole = Math.floor(Math.abs(num));
+    const dec = Math.round((Math.abs(num) - whole) * 100);
+    const fn = (typeof n2words === 'function') ? n2words
+              : (typeof window.n2words === 'function') ? window.n2words
+              : null;
+    if(fn){
+      let text = fn(whole, {lang:'ar'});
+      if(dec > 0) text += ' وَ' + fn(dec, {lang:'ar'}) + ' هللة';
+      return text;
+    }
+  }catch(e){}
+  return numToAr(num);
+}
+
+function numToAr(n){
+  n=Math.floor(n);
+  if(n===0)return'صفر';
+  if(n<0)return'سالب '+numToAr(-n);
+  let parts=[];
+  if(n>=1000000000){parts.push(numToAr(Math.floor(n/1000000000))+' مليار');n%=1000000000;}
+  if(n>=1000000){parts.push(numToAr(Math.floor(n/1000000))+' مليون');n%=1000000;}
+  if(n>=1000){parts.push(numToAr(Math.floor(n/1000))+' ألف');n%=1000;}
+  if(n>=100){
+    const hundreds = Math.floor(n/100);
+    parts.push(hundreds===1 ? 'مئة' : hundreds===2 ? 'مئتان' : ONES[hundreds]+' مئة');
+    n%=100;
+  }
+  if(n>=20){
+    let t=TENS[Math.floor(n/10)];
+    if(n%10) t=ONES[n%10]+' و'+TENS[Math.floor(n/10)];
+    parts.push(t);
+  } else if(n>0){
+    parts.push(ONES[n]);
+  }
+  return parts.join(' و');
+}
+function updateWords(inputId, wordsId){
+  const inp=document.getElementById(inputId);
+  const el=document.getElementById(wordsId);
+  if(!inp||!el)return;
+  const val=parseFloat(inp.value);
+  el.textContent=(!val||isNaN(val))?'':numToAr(val);
+}
+function toWestern(str){
+  return String(str).replace(/[٠١٢٣٤٥٦٧٨٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+                    .replace(/[۰۱۲۳۴۵۶۷۸۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+}
+function fixInput(el){
+  const val=toWestern(el.value);
+  if(el.value!==val){const p=el.selectionStart;el.value=val;try{el.setSelectionRange(p,p);}catch(e){}}
+}
+document.querySelectorAll('input[type=number]').forEach(el=>{
+  el.addEventListener('input',()=>fixInput(el));
+});
+function calc(source){
+  const code=document.getElementById('currency').value;
+  const c=CURRENCIES[code];
+  const rate=parseFloat(document.getElementById('rate').value)||c.rate;
+  const comm=parseFloat(document.getElementById('comm').value)||0;
+
+  document.getElementById('rate-hint').textContent=`1 ${code} = ${rate} ر.س`;
+
+  let sar=parseFloat(document.getElementById('sar').value)||0;
+  let foreign=parseFloat(document.getElementById('foreign').value)||0;
+
+  if(source==='sar'){
+    const net=sar*(1-comm/100);
+    foreign=net/rate;
+    document.getElementById('foreign').value=foreign>0?foreign.toFixed(c.decimals):'';
+  } else if(source==='foreign'){
+    sar=foreign*rate*(1/(1-comm/100));
+    document.getElementById('sar').value=sar>0?sar.toFixed(2):'';
+  } else if(source==='rate'){
+    if(sar>0){
+      const net=sar*(1-comm/100);
+      foreign=net/rate;
+      document.getElementById('foreign').value=foreign>0?foreign.toFixed(c.decimals):'';
+    }
+  }
+
+  const net=sar*(1-comm/100);
+  const buyR=rate*1.002,sellR=rate*0.998;
+  const buyP=net/sellR;   // ريال تدفع ← تحصل على عملة بسعر بيع الصراف
+  const sellP=net/buyR;   // ريال تحصل ← تبيع عملة بسعر شراء الصراف
+  const dec=CURRENCIES[code].decimals;
+  document.getElementById('buy-price').textContent=buyP.toFixed(dec);
+  document.getElementById('sell-price').textContent=sellP.toFixed(dec);
+  setArrow('buy-arrow',buyP,prevBuy);
+  setArrow('sell-arrow',sellP,prevSell);
+  prevBuy=buyP;prevSell=sellP;
+  updateWords('sar','sar-words');
+  updateWords('foreign','foreign-words');
+  saveSettings();
+}
+
+function setArrow(id,cur,prev){
+  const el=document.getElementById(id);
+  if(cur>prev){el.textContent='↑';el.className='arrow arrow-up';}
+  else if(cur<prev){el.textContent='↓';el.className='arrow arrow-down';}
+  else{el.textContent='⟷';el.className='arrow';}
+}
+
+async function trade(type){
+  const code=document.getElementById('currency').value;
+  const c=CURRENCIES[code];
+  const rate=parseFloat(document.getElementById('rate').value)||c.rate;
+  const comm=parseFloat(document.getElementById('comm').value)||0;
+  const sar=parseFloat(document.getElementById('sar').value)||0;
+  if(!sar){showToast('⚠️ الرجاء إدخال المبلغ أولاً','warn');return;}
+  const commAmt=sar*(comm/100);
+  const net=sar-commAmt;
+  const foreign=net/rate;
+  const price=(type==='buy'?rate*1.002:rate*0.998).toFixed(4);
+  const tafqeet=toArabicWords(parseFloat(foreign.toFixed(c.decimals)));
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric'});
+  const timeStr=now.toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'});
+  const tx={
+    type:type==='buy'?'شراء':'بيع',
+    currency:code,flag:c.flag,currencyName:c.name,
+    sar:sar.toFixed(2),
+    net:net.toFixed(2),
+    foreign:foreign.toFixed(c.decimals),
+    price,rate,comm,
+    commAmt:commAmt.toFixed(2),
+    tafqeet,
+    date:dateStr+' — '+timeStr,
+    ts:now.getTime()
+  };
+  const duplicate = txs.find(t=>
+    t.type===tx.type &&
+    t.currency===tx.currency &&
+    t.sar===tx.sar &&
+    t.price===tx.price &&
+    (now.getTime()-(t.ts||0)) < 60000
+  );
+  if(duplicate){
+    const msg=`سبق تسجيل هذه العملية:<br><br>
+      <strong>${duplicate.type}</strong> ${duplicate.flag||''} ${duplicate.currency}<br>
+      المبلغ: <strong>${parseFloat(duplicate.sar).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong><br>
+      السعر المنفّذ: <strong>${duplicate.price}</strong><br>
+      التوقيت: ${duplicate.date}<br><br>
+      هل تريد حفظها مجدداً؟`;
+    const confirmed = await showConfirm(msg);
+    if(!confirmed) return;
+  }
+  try{
+    const insertedId = await db.txs.add(tx);
+    tx.id = insertedId;
+  }catch(e){}
+  txs.unshift(tx);
+  const rwEl=document.getElementById('result-words');
+  const rwText=document.getElementById('result-words-text');
+  rwEl.style.display='block';
+  rwText.textContent=`${tafqeet} ${c.name}`;
+  saveToSupabase(tx).then(()=>loadCloudHistory());
+  showToast('✅ تم حفظ العملية بنجاح');
+  renderTxs();
+}
+
+function renderTxs(){
+  const el=document.getElementById('tx-list');
+  if(!txs.length){el.innerHTML='<div class="empty">لا توجد عمليات بعد</div>';return;}
+  el.innerHTML=txs.map((t,i)=>{
+    const isBuy=t.type==='شراء';
+    const typeClass=isBuy?'type-buy':'type-sell';
+    const borderClass=isBuy?'buy':'sell';
+    const arrow=isBuy?'←':'→';
+    return `
+    <div class="tx ${borderClass}">
+      <div class="tx-info">
+        <strong class="${typeClass}">${t.type} ${arrow}</strong>&nbsp;
+        ${t.flag||'🏳️'} ${t.currency||'SAR'} &nbsp;•&nbsp; 🕐 ${t.date}<br>
+        💵 المبلغ: <strong>${parseFloat(t.sar).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong>
+        ${parseFloat(t.comm)>0?`| عمولة: ${t.comm}% (<span style="color:#f9a825">${parseFloat(t.commAmt).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</span>)`:''}<br>
+        📊 الصافي: <strong style="color:#4caf50">${parseFloat(t.net).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong>
+        &nbsp;⇄&nbsp; <strong style="color:#4a9eff">${parseFloat(t.foreign).toLocaleString('en-US',{minimumFractionDigits:CURRENCIES[t.currency]?.decimals??2})} ${t.currency}</strong><br>
+        💱 السعر المنفّذ: <span style="color:#a78bfa">${t.price}</span> &nbsp;|&nbsp; مرجعي: ${t.rate}<br>
+        <span class="tx-tafqeet">( ${t.tafqeet||numToAr(parseFloat(t.foreign))} ${t.currencyName||CURRENCIES[t.currency]?.name||t.currency} )</span>
+      </div>
+      <button class="del-btn" onclick="delTx(${i})">حذف</button>
+    </div>`;
+  }).join('');
+}
+
+async function delTx(i){
+  const tx=txs[i];
+  const confirmed = await showConfirm(`هل أنت متأكد من حذف هذه العملية؟<br><br><strong>${tx.type}</strong> ${tx.flag||''} ${tx.currency}<br>المبلغ: <strong>${parseFloat(tx.sar).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س</strong>`, {title:'حذف العملية', icon:'🗑️', yesText:'نعم، احذف', noText:'إلغاء'});
+  if(!confirmed)return;
+  txs.splice(i,1);
+  try{if(tx.id) await db.txs.delete(tx.id);}catch(e){}
+  renderTxs();
+}
+
+function saveLog(){
+  const lines=txs.map(t=>[
+    `[${t.date}]`,
+    `${t.type} | ${t.flag||''} ${t.currency}`,
+    `المبلغ: ${t.sar} ر.س`,
+    `الصافي: ${t.net} ر.س`,
+    `السعر المنفّذ: ${t.price}`,
+    `التفقيط: ${t.tafqeet||numToAr(parseFloat(t.net))} ريالاً سعودياً`
+  ].join(' | ')).join('\n');
+  const blob=new Blob([`سجل العمليات\n${'='.repeat(60)}\n\n${lines}`],{type:'text/plain;charset=UTF-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`سجل_الصرف_${Date.now()}.txt`;a.click();
+}
+
+async function clearLog(){
+  const confirmed = await showConfirm('سيتم حذف <strong>جميع السجلات المحلية</strong>.<br>هل أنت متأكد؟', {title:'مسح السجل', icon:'🗑️', yesText:'نعم، امسح الكل', noText:'إلغاء'});
+  if(!confirmed)return;
+  txs=[];
+  try{await db.txs.clear();}catch(e){}
+  const rwEl=document.getElementById('result-words');
+  if(rwEl) rwEl.style.display='none';
+  renderTxs();
+}
+
+function toggleCloud(){
+  const wrap=document.getElementById('cloud-table-wrap');
+  const btn=document.getElementById('cloud-toggle-btn');
+  const hidden=wrap.style.display==='none';
+  wrap.style.display=hidden?'':'none';
+  btn.textContent=hidden?'🙈 إخفاء':'👁 إظهار';
+}
+
+let cloudSelectMode = false;
+let selectedCloudIds = new Set();
+
+function toggleSelectMode(force){
+  cloudSelectMode = force !== undefined ? force : !cloudSelectMode;
+  selectedCloudIds.clear();
+  const bar = document.getElementById('cloud-bulk-bar');
+  bar.style.display = cloudSelectMode ? 'flex' : 'none';
+  // Show correct action buttons based on view
+  const isTrash = cloudView === 'trash';
+  const delBtn = document.getElementById('bulk-delete-btn');
+  const restoreBtn = document.getElementById('bulk-restore-btn');
+  const hardDelBtn = document.getElementById('bulk-hard-delete-btn');
+  if(delBtn) delBtn.style.display = isTrash ? 'none' : '';
+  if(restoreBtn) restoreBtn.style.display = isTrash ? '' : 'none';
+  if(hardDelBtn) hardDelBtn.style.display = isTrash ? '' : 'none';
+  updateSelectedCount();
+  loadCloudHistory();
+}
+
+function updateSelectedCount(){
+  const el = document.getElementById('cloud-selected-count');
+  if(el) el.textContent = selectedCloudIds.size + ' محدد';
+  const allCb = document.getElementById('cloud-select-all');
+  if(allCb){
+    const allRows = document.querySelectorAll('.cloud-row-cb');
+    allCb.checked = allRows.length > 0 && selectedCloudIds.size === allRows.length;
+    allCb.indeterminate = selectedCloudIds.size > 0 && selectedCloudIds.size < allRows.length;
+  }
+  // Show/hide bulk bar based on selection
+  const bar = document.getElementById('cloud-bulk-bar');
+  if(bar && selectedCloudIds.size > 0 && !cloudSelectMode){
+    const isTrash = cloudView === 'trash';
+    const delBtn = document.getElementById('bulk-delete-btn');
+    const restoreBtn = document.getElementById('bulk-restore-btn');
+    const hardDelBtn = document.getElementById('bulk-hard-delete-btn');
+    if(delBtn) delBtn.style.display = isTrash ? 'none' : '';
+    if(restoreBtn) restoreBtn.style.display = isTrash ? '' : 'none';
+    if(hardDelBtn) hardDelBtn.style.display = isTrash ? '' : 'none';
+    bar.style.display = 'flex';
+  } else if(bar && selectedCloudIds.size === 0 && !cloudSelectMode){
+    bar.style.display = 'none';
+  }
+}
+
+function toggleSelectAllFromHeader(cb){
+  toggleSelectAll(cb.checked);
+}
+
+function toggleSelectAll(checked){
+  document.querySelectorAll('.cloud-row-cb').forEach(cb=>{
+    cb.checked = checked;
+    const id = parseInt(cb.dataset.id);
+    if(checked) selectedCloudIds.add(id);
+    else selectedCloudIds.delete(id);
+    cb.closest('tr').classList.toggle('cloud-row-selected', checked);
+  });
+  updateSelectedCount();
+}
+
+function toggleRowSelect(cb){
+  const id = parseInt(cb.dataset.id);
+  if(cb.checked) selectedCloudIds.add(id);
+  else selectedCloudIds.delete(id);
+  cb.closest('tr').classList.toggle('cloud-row-selected', cb.checked);
+  updateSelectedCount();
+}
+
+async function bulkDeleteSelected(){
+  if(!selectedCloudIds.size){ showToast('⚠️ لم تحدد أي عملية','warn'); return; }
+  const confirmed = await showConfirm(
+    `<div style="text-align:center">
+      <div style="font-size:2.2rem;margin-bottom:10px">🗑️</div>
+      <div style="color:#fff;font-size:.92rem;margin-bottom:14px">سيتم نقل <strong style="color:#f44336">${selectedCloudIds.size}</strong> عملية إلى سلة المحذوفات</div>
+      <div style="background:#1a2a3a;border:1px solid #2a4a6a;border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:1.3rem">♻️</span>
+        <div style="text-align:right">
+          <div style="color:#4a9eff;font-weight:700;font-size:.83rem">يمكنك استعادتها لاحقاً</div>
+          <div style="color:#aaa;font-size:.76rem;margin-top:2px">تُحفظ في المحذوفات لمدة <strong style="color:#f9a825">30 يوماً</strong></div>
+        </div>
+      </div>
+    </div>`,
+    {title:'حذف المحدد', icon:'', yesText:'نعم، احذف', noText:'إلغاء'}
+  );
+  if(!confirmed) return;
+  let done=0;
+  try{
+    const r = await rpcAuth('xr_soft_delete', { p_ids: [...selectedCloudIds].map(String) });
+    done = r?.count || 0;
+  }catch(e){ dbErr('تعذّر الحذف', e); return; }
+  selectedCloudIds.clear();
+  showInfoToast('🗑️ تم الحذف', 'تم نقل '+done+' عملية إلى المحذوفات • محفوظة لمدة <strong style="color:#f9a825">30 يوماً</strong>');
+  loadCloudHistory();
+}
+
+async function bulkRestoreSelected(){
+  if(!selectedCloudIds.size){ showToast('⚠️ لم تحدد أي عملية','warn'); return; }
+  const confirmed = await showConfirm(`سيتم استعادة <strong>${selectedCloudIds.size}</strong> عملية.<br>هل أنت متأكد؟`,{title:'استعادة المحدد',icon:'♻️',yesText:'نعم، استعد',noText:'إلغاء'});
+  if(!confirmed) return;
+  let done=0;
+  try{
+    const r = await rpcAuth('xr_restore', { p_ids: [...selectedCloudIds].map(String) });
+    done = r?.count || 0;
+  }catch(e){ dbErr('تعذّرت الاستعادة', e); return; }
+  selectedCloudIds.clear();
+  showToast('✅ تم استعادة '+done+' عملية');
+  loadCloudHistory();
+}
+
+async function bulkHardDeleteSelected(){
+  if(!selectedCloudIds.size){ showToast('⚠️ لم تحدد أي عملية','warn'); return; }
+  const confirmed = await showConfirm(`سيتم الحذف النهائي لـ <strong>${selectedCloudIds.size}</strong> عملية.<br>⚠️ لا يمكن التراجع عن هذا الإجراء!`,{title:'حذف نهائي',icon:'✖',yesText:'نعم، احذف نهائياً',noText:'إلغاء'});
+  if(!confirmed) return;
+  let done=0;
+  try{
+    const r = await rpcAuth('xr_hard_delete', { p_ids: [...selectedCloudIds].map(String) });
+    done = r?.count || 0;
+  }catch(e){ dbErr('تعذّر الحذف النهائي', e); return; }
+  selectedCloudIds.clear();
+  showToast('✅ تم الحذف النهائي لـ '+done+' عملية');
+  loadCloudHistory();
+}
+
+requireAuth();
+// تفعيل المظهر المرئي لزر التذكّر
+setTimeout(updateRememberVisual, 50);
+fetchLiveRates(); // جلب تلقائي عند تحميل الصفحة
+setInterval(()=>{ if(AUTH) fetchLiveRates(); }, 10*60*1000); // تحديث تلقائي كل 10 دقائق
+
+// إجبار الوضع الداكن على القوائم المنسدلة في الأجهزة الذكية
+document.querySelectorAll('select').forEach(s=>{
+  s.style.colorScheme='dark';
+});
+</script>
+</body>
+</html>
