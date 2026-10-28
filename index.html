@@ -206,7 +206,8 @@ window.Dexie = Dexie;
   .cloud-badge.buy{background:rgba(76,175,80,.15);color:#4caf50;border:1px solid rgba(76,175,80,.3)}
   .cloud-badge.sell{background:rgba(244,67,54,.15);color:#f44336;border:1px solid rgba(244,67,54,.3)}
   .cloud-empty{text-align:center;color:#555;font-size:.85rem;padding:24px}
-  .cloud-tafqeet{color:#a78bfa;font-size:.72rem;display:block;margin-top:2px;font-style:italic}
+  .cloud-tafqeet{color:#a78bfa;font-size:.72rem;display:block;margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;line-height:1.55}
+  .cloud-table td.tafqeet-cell{white-space:normal;min-width:210px;max-width:320px}
   .cloud-status{display:flex;align-items:center;gap:6px;font-size:.72rem;margin-bottom:8px}
   .cloud-dot{width:7px;height:7px;border-radius:50%;background:#555}
   .cloud-dot.ok{background:#4caf50;box-shadow:0 0 6px #4caf50}
@@ -324,7 +325,8 @@ window.Dexie = Dexie;
     .cloud-table th{padding:8px 6px;white-space:nowrap}
     .cloud-table td{padding:8px 6px;white-space:nowrap}
     .cloud-act{padding:6px 10px;font-size:1rem;min-width:36px;min-height:36px}
-    .cloud-tafqeet{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .cloud-tafqeet{max-width:none;overflow:visible;text-overflow:clip;white-space:normal;font-size:.68rem}
+    .cloud-table td.tafqeet-cell{white-space:normal;min-width:170px;max-width:200px}
     .tx{flex-direction:column;gap:6px}
     .tx-info{font-size:.8rem}
     .del-btn{width:100%;padding:8px;margin-top:8px}
@@ -333,6 +335,7 @@ window.Dexie = Dexie;
   }
   @media (max-width: 360px){
     h1{font-size:1.2rem}
+    .cloud-table td.tafqeet-cell{min-width:150px;max-width:175px}
     .card-title{font-size:.7rem}
     .price-card .val{font-size:1.1rem}
     .cloud-table{font-size:.65rem}
@@ -387,22 +390,16 @@ window.Dexie = Dexie;
     <div class="auth-logo">🔑</div>
     <div class="auth-title">إعادة تعيين كلمة المرور</div>
 
-    <!-- الخطوة 1: إثبات الهوية بالتلميح (يُكتب ولا يُكشف) -->
+    <!-- الخطوة 1: إظهار التلميح -->
     <div class="reset-step active" id="reset-step1">
-      <div class="auth-sub">اكتب اسم المستخدم والتلميح الذي سجّلته</div>
+      <div class="auth-sub">اكتب اسم المستخدم لرؤية التلميح</div>
       <div class="auth-field">
         <label>اسم المستخدم</label>
         <input type="text" id="reset-user" placeholder="اسم المستخدم" autocomplete="username"
           oninput="resetMsg('')"
-          onkeydown="if(event.key==='Enter')document.getElementById('reset-hint-input').focus()">
+          onkeydown="if(event.key==='Enter')fetchResetHint()">
       </div>
-      <div class="auth-field">
-        <label>التلميح</label>
-        <input type="text" id="reset-hint-input" placeholder="التلميح الذي سجّلته" autocomplete="off"
-          oninput="resetMsg('')"
-          onkeydown="if(event.key==='Enter')startReset()">
-      </div>
-      <button class="auth-btn" onclick="startReset()" id="reset-hint-btn">متابعة ←</button>
+      <button class="auth-btn" onclick="fetchResetHint()" id="reset-hint-btn">🔍 اكشف التلميح</button>
       <div class="reset-hint-box" id="reset-hint-box" style="display:none"></div>
       <div class="auth-msg" id="reset-msg1"></div>
       <div style="text-align:center;margin-top:14px">
@@ -844,7 +841,6 @@ let _resetHint = '';
 function openResetScreen(){
   const u = document.getElementById('auth-user').value.trim().toLowerCase();
   document.getElementById('reset-user').value = u;
-  document.getElementById('reset-hint-input').value = '';
   document.getElementById('reset-hint-box').style.display = 'none';
   document.getElementById('reset-hint-box').textContent = '';
   resetMsg('','1'); resetMsg('','2');
@@ -871,18 +867,38 @@ function resetMsg(msg, step='1', type=''){
   if(el){ el.innerHTML=msg; el.className='auth-msg '+(msg?(type||'err'):''); }
 }
 
-/** الخطوة ١: لا تلمس القاعدة. التلميح يُتحقق منه في app_reset_with_hint
- *  مع عدّاد المحاولات الفاشلة، فلا يُكشف هنا ولا يُقارَن في المتصفح. */
-function startReset(){
+/** الخطوة ١: يُكشف التلميح من app_get_hint ثم يُحتفظ به لتمريره
+ *  إلى app_reset_with_hint في الخطوة الثانية.
+ *  ⚠️ ملاحظة أمنية مقصودة: الكشف يجعل مطابقة التلميح في القاعدة
+ *     إجراءً شكلياً — من يعرف اسم حساب يستطيع كشف تلميحه ثم إعادة
+ *     تعيين كلمة مروره. (نفس سلوك رابط «نسيت كلمة المرور؟» في شاشة
+ *     الدخول، وهو موجود في التطبيقات الأربعة.) */
+async function fetchResetHint(){
   const username = document.getElementById('reset-user').value.trim().toLowerCase();
-  const hint     = document.getElementById('reset-hint-input').value.trim();
   if(!username){ resetMsg('⚠️ اكتب اسم المستخدم أولاً'); return; }
-  if(!hint){ resetMsg('⚠️ اكتب التلميح الذي سجّلته عند إنشاء الحساب'); return; }
-  _resetUsername = username;
-  _resetHint = hint;
-  resetMsg('','1');
-  document.getElementById('reset-sub2').textContent = 'كلمة مرور جديدة لـ: '+username;
-  showResetStep(2);
+  const btn = document.getElementById('reset-hint-btn');
+  btn.disabled=true; btn.textContent='⏳ جاري...';
+  resetMsg('');
+  try{
+    const res = await rpc('app_get_hint', { p_user: username });
+    if(!res?.exists){ resetMsg('⚠️ اسم المستخدم غير مسجّل'); return; }
+    const hint = res.hint || '';
+    const hintBox = document.getElementById('reset-hint-box');
+    hintBox.style.display='';
+    if(hint){
+      hintBox.innerHTML='💡 تلميح: <strong>'+hint+'</strong>';
+    } else {
+      hintBox.innerHTML='<span style="color:#888">لا يوجد تلميح محفوظ</span>';
+    }
+    _resetUsername = username;
+    _resetHint = hint;
+    document.getElementById('reset-sub2').textContent = 'كلمة مرور جديدة لـ: '+username;
+    setTimeout(()=>showResetStep(2), 900);
+  }catch(e){
+    resetMsg('⚠️ خطأ: '+e.message);
+  }finally{
+    btn.disabled=false; btn.textContent='🔍 اكشف التلميح';
+  }
 }
 
 async function submitResetPassword(){
@@ -901,7 +917,8 @@ async function submitResetPassword(){
     if(!res?.ok){
       const err = res?.error||'';
       if(err==='hint_mismatch'){
-        resetMsg('⚠️ التلميح غير مطابق','2','err'); showResetStep(1); return;
+        // يقع هذا إن كان الحساب بلا تلميح محفوظ: القاعدة ترفض المطابقة الفارغة
+        resetMsg('⚠️ لا يوجد تلميح محفوظ لهذا الحساب — تعذّرت إعادة التعيين','2','err'); return;
       }
       if(err==='locked'){
         resetMsg('⛔ أُقفل الحساب مؤقتاً بعد محاولات كثيرة. انتظر ١٥ دقيقة.','2','err'); return;
@@ -1256,7 +1273,7 @@ async function loadCloudHistory(){
           <td>${parseFloat(r.base_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
           <td style="color:#4a9eff;font-weight:700">${parseFloat(r.converted_amount||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
           <td style="color:#a78bfa">${parseFloat(r.exchange_rate||0)}</td>
-          <td><span class="cloud-tafqeet">${r.arabic_text||'—'}</span></td>
+          <td class="tafqeet-cell"><span class="cloud-tafqeet">${r.arabic_text||'—'}</span></td>
           <td style="color:#666;font-size:.7rem">${dateStr}</td>
           <td style="font-size:.7rem">${remaining}</td>
           ${actions}
